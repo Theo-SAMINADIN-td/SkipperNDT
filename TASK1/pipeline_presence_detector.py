@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from torchvision import models
 import numpy as np
 import glob
 import os
@@ -90,63 +91,46 @@ class PipelineDataset(Dataset):
 class PipelinePresenceClassifier(nn.Module):
     """
     Modèle CNN pour la classification binaire de la présence de conduites
-    Architecture basée sur ResNet avec adaptation pour 4 canaux
+    Architecture basée sur ConvNeXt-Tiny avec adaptation pour 4 canaux
     """
     
     def __init__(self, num_channels=4, pretrained=False):
         super(PipelinePresenceClassifier, self).__init__()
         
-        # Architecture CNN personnalisée
-        self.features = nn.Sequential(
-            # Block 1
-            nn.Conv2d(num_channels, 64, kernel_size=7, stride=2, padding=3),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
-            
-            # Block 2
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            
-            # Block 3
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            
-            # Block 4
-            nn.Conv2d(256, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            nn.AdaptiveAvgPool2d((1, 1))
+        # Charger ConvNeXt-Tiny
+        weights = models.ConvNeXt_Tiny_Weights.DEFAULT if pretrained else None
+        backbone = models.convnext_tiny(weights=weights)
+        
+        # Adapter la première couche Conv pour accepter num_channels au lieu de 3
+        first_block = backbone.features[0]
+        assert isinstance(first_block, nn.Sequential)
+        old_conv = first_block[0]
+        assert isinstance(old_conv, nn.Conv2d)
+        first_block[0] = nn.Conv2d(
+            num_channels, old_conv.out_channels,
+            kernel_size=(old_conv.kernel_size[0], old_conv.kernel_size[1]),
+            stride=(old_conv.stride[0], old_conv.stride[1]),
+            padding=(int(old_conv.padding[0]), int(old_conv.padding[1]))
         )
         
-        # Classificateur
-        self.classifier = nn.Sequential(
+        # Remplacer le classifieur par une tête de classification binaire
+        linear_layer = backbone.classifier[2]
+        assert isinstance(linear_layer, nn.Linear)
+        in_features = linear_layer.in_features
+        
+        backbone.classifier[2] = nn.Sequential(
             nn.Dropout(0.5),
-            nn.Linear(512, 256),
+            nn.Linear(in_features, 256),
             nn.ReLU(inplace=True),
             nn.Dropout(0.3),
             nn.Linear(256, 1),
             nn.Sigmoid()
         )
         
+        self.model = backbone
+        
     def forward(self, x):
-        x = self.features(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return x
+        return self.model(x)
 
 
 def load_data_with_labels(data_dir):
@@ -288,7 +272,7 @@ def plot_training_history(history, save_path='training_history.png'):
 
 def main():
     # Configuration
-    DATA_DIR = '/home/tsaminadin/Documents/HETIC/SkipperNDT/Training_database_float16'
+    DATA_DIR = r'D:\HETIC\SkipperNDT\Training_database_float16'  # Chemin vers les données
     BATCH_SIZE = 16
     NUM_EPOCHS = 50
     LEARNING_RATE = 0.001
@@ -323,9 +307,9 @@ def main():
     val_dataset = PipelineDataset(val_files, val_labels, target_size=TARGET_SIZE)
     test_dataset = PipelineDataset(test_files, test_labels, target_size=TARGET_SIZE)
     
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
     
     # Créer le modèle
     print("\n3. Creating model...")
