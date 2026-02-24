@@ -91,35 +91,32 @@ class PipelineDataset(Dataset):
 class PipelinePresenceClassifier(nn.Module):
     """
     Modèle CNN pour la classification binaire de la présence de conduites
-    Architecture basée sur ConvNeXt-Tiny avec adaptation pour 4 canaux
+    Architecture basée sur EfficientNet-V2-S avec adaptation pour 4 canaux
     """
     
     def __init__(self, num_channels=4, pretrained=False):
         super(PipelinePresenceClassifier, self).__init__()
         
-        # Charger ConvNeXt-Tiny
-        weights = models.ConvNeXt_Tiny_Weights.DEFAULT if pretrained else None
-        backbone = models.convnext_tiny(weights=weights)
+        # Charger EfficientNet-V2-S
+        weights = models.EfficientNet_V2_S_Weights.DEFAULT if pretrained else None
+        backbone = models.efficientnet_v2_s(weights=weights)
         
         # Adapter la première couche Conv pour accepter num_channels au lieu de 3
-        first_block = backbone.features[0]
-        assert isinstance(first_block, nn.Sequential)
-        old_conv = first_block[0]
+        old_conv = backbone.features[0][0]
         assert isinstance(old_conv, nn.Conv2d)
-        first_block[0] = nn.Conv2d(
+        backbone.features[0][0] = nn.Conv2d(
             num_channels, old_conv.out_channels,
-            kernel_size=(old_conv.kernel_size[0], old_conv.kernel_size[1]),
-            stride=(old_conv.stride[0], old_conv.stride[1]),
-            padding=(int(old_conv.padding[0]), int(old_conv.padding[1]))
+            kernel_size=old_conv.kernel_size,
+            stride=old_conv.stride,
+            padding=old_conv.padding,
+            bias=False
         )
         
         # Remplacer le classifieur par une tête de classification binaire
-        linear_layer = backbone.classifier[2]
-        assert isinstance(linear_layer, nn.Linear)
-        in_features = linear_layer.in_features
+        in_features = backbone.classifier[1].in_features
         
-        backbone.classifier[2] = nn.Sequential(
-            nn.Dropout(0.5),
+        backbone.classifier = nn.Sequential(
+            nn.Dropout(0.5, inplace=True),
             nn.Linear(in_features, 256),
             nn.ReLU(inplace=True),
             nn.Dropout(0.3),
@@ -272,7 +269,7 @@ def plot_training_history(history, save_path='training_history.png'):
 
 def main():
     # Configuration
-    DATA_DIR = r'D:\HETIC\SkipperNDT\Training_database_float16'  # Chemin vers les données
+    DATA_DIR = r'Training_database_float16'  # Chemin vers les données
     BATCH_SIZE = 16
     NUM_EPOCHS = 50
     LEARNING_RATE = 0.001
@@ -388,7 +385,7 @@ def main():
     )
     
     print(f"\n{'='*50}")
-    print(f"FINAL TEST RESULTS")
+    print("FINAL TEST RESULTS")
     print(f"{'='*50}")
     print(f"Accuracy: {test_acc:.4f} (Target: > 0.92)")
     print(f"Recall: {test_recall:.4f} (Target: > 0.95)")
@@ -397,11 +394,11 @@ def main():
     
     # Matrice de confusion
     cm = confusion_matrix(test_true, test_preds)
-    print(f"\nConfusion Matrix:")
+    print("\nConfusion Matrix:")
     print(cm)
     
     # Rapport de classification
-    print(f"\nClassification Report:")
+    print("\nClassification Report:")
     print(classification_report(test_true, test_preds, target_names=['No Pipe', 'With Pipe']))
     
     # Sauvegarder les résultats
@@ -423,9 +420,9 @@ def main():
         json.dump(results, f, indent=4)
     
     print("\n✓ Training complete! Results saved.")
-    print(f"  - Model: best_pipeline_classifier.pth")
-    print(f"  - History plot: training_history.png")
-    print(f"  - Results: test_results.json")
+    print("  - Model: best_pipeline_classifier.pth")
+    print("  - History plot: training_history.png")
+    print("  - Results: test_results.json")
 
 
 if __name__ == "__main__":
