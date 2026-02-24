@@ -1,0 +1,314 @@
+
+                                                                        
+                   TÂCHE 2 - RÉGRESSION COMPLÉTÉE                   
+                 Prédiction de Map Width - Deep Learning               
+                                                                        
+
+
+
+ FICHIERS CRÉÉS
+
+
+ Scripts Python (5 fichiers - ~2,500 lignes de code)
+   1. map_width_regressor.py         (~700 lignes)
+      → Script d'entraînement complet
+      
+   2. predict_map_width.py           (~350 lignes)
+      → Prédiction sur fichier unique
+      
+   3. batch_predict_width.py         (~150 lignes)
+      → Prédictions batch + export CSV
+      
+   4. evaluate_regression.py         (~450 lignes)
+      → Évaluation complète du modèle
+      
+   5. analyze_width_dataset.py       (~400 lignes)
+      → Analyse exploratoire du dataset
+
+ Validation & Test (2 fichiers)
+   6. test_system.py                 (~250 lignes)
+      → Validation de l'installation
+      
+   7. quick_start.sh                 (Script automatique)
+      → Setup Linux/macOS
+
+ Documentation (4 fichiers)
+   8. README_TASK2.md                (~400 lignes)
+      → Documentation complète du projet
+      
+   9. INSTALLATION.md                (~250 lignes)
+      → Guide installation détaillé
+      
+   10. PROJECT_SUMMARY_TASK2.py      (~300 lignes)
+       → Synthèse technique du projet
+       
+   11. START_HERE.py                 (~300 lignes)
+       → Point d'entrée avec instructions
+
+ Configuration (1 fichier)
+   12. requirements.txt               
+       → Dépendances Python
+
+
+ SPÉCIFICATIONS MET
+
+
+ Architecture: Backbone convolutif 4 blocs + tête de régression
+ Entrée: (Batch, 4, 224, 224) - 4 canaux magnétiques
+ Sortie: (Batch, 1) - Largeur en mètres [5-80m]
+ Total paramètres: ~2.5 millions
+
+ Hyperparamètres configurés:
+  - Batch Size: 32 (adaptable à 16 si OOM)
+  - Learning Rate: 1e-4 (Adam optimizer)
+  - Epochs: 100 (avec early stopping)
+  - Loss Train: MSELoss
+  - Loss Eval: MAELoss
+  - Patience: 15 epochs
+  - Scheduler: ReduceLROnPlateau
+
+ Preprocessing:
+  1. Chargement données magnétiques
+  2. Nettoyage NaN/Inf
+  3. Redimensionnement 224×224
+  4. Normalisation par canal
+  5. Transposition (H,W,C) → (C,H,W)
+
+ Métriques d'évaluation:
+  - MAE < 1.0m (OBJECTIF)
+  - R² > 0.90
+  - RMSE minimisé
+  - Distribution erreurs analysée
+
+ Dataset:
+  - Split: 70% train / 15% val / 15% test
+  - Minimum: 500 échantillons
+  - Format: .npz avec 4 canaux + label
+
+
+ DÉMARRAGE RAPIDE
+
+
+ÉTAPE 1: Installation (5 minutes)
+  $ pip install -r requirements.txt
+
+ÉTAPE 2: Validation (optionnel)
+  $ python test_system.py
+
+ÉTAPE 3: Préparation données
+  $ mkdir data
+  $ # Placer fichiers .npz dans data/
+
+ÉTAPE 4: Analyse dataset (optionnel)
+  $ python analyze_width_dataset.py
+
+ÉTAPE 5: Entraînement
+  $ python map_width_regressor.py
+  # Durée: 30 min (GPU) à 2 jours (CPU)
+
+ÉTAPE 6: Prédictions
+  # Single file:
+  $ python predict_map_width.py data/sample.npz
+  
+  # Batch:
+  $ python batch_predict_width.py data/ --output predictions.csv
+
+ÉTAPE 7: Évaluation (optionnel)
+  $ python evaluate_regression.py
+
+
+ FICHIERS GÉNÉRÉS APRÈS ENTRAÎNEMENT
+
+
+outputs/
+ best_map_width_regressor.pth        [Modèle entraîné]
+ training_history_regression.png     [Courbes MAE/Loss]
+ scatter_predicted_vs_real.png       [Prédictions vs réalité]
+ error_distribution.png              [Histogramme erreurs]
+ evaluation_comprehensive.png        [4 graphes évaluation]
+ width_distribution.png              [6 graphes dataset]
+ outliers_visualization.png          [Outliers détection]
+ regression_results.json             [Métriques training/test]
+ evaluation_results.json             [Métriques détaillées]
+ dataset_analysis.json               [Stats dataset]
+ predictions.csv                     [Résultats batch]
+
+
+ CARACTÉRISTIQUES CLÉS
+
+
+ Code Entièrement Commenté
+   → Facilement compréhensible pour débutants
+   → Section par section expliquée
+
+ Architecture Modulaire
+   → Classes réutilisables
+   → Facile à étendre ou adapter
+
+ Gestion Robuste des Données
+   → Validation des fichiers .npz
+   → Nettoyage automatique NaN/Inf
+   → Preprocessing standard
+
+ Entraînement Intelligent
+   → Early stopping contre overfitting
+   → Scheduler adaptatif du learning rate
+   → Sauvegarde du meilleur modèle (basé MAE)
+
+ Visualisations Complètes
+   → Courbes d'entraînement
+   → Scatter plots prédictions
+   → Distribution des erreurs
+   → Analyse statistique dataset
+
+ Support Flexible
+   → CPU et GPU (CUDA)
+   → Batch adaptable à la mémoire
+   → Prédictions individuelles ou batch
+
+ Documentation Exhaustive
+   → README complet
+   → Guide installation
+   → Codes commentés
+   → Synthèse technique
+
+
+ WORKFLOW COMPLET
+
+
+1. PHASE PRÉPARATION
+    Valider installation (test_system.py)
+    Analyser dataset (analyze_width_dataset.py)
+    Vérifier distribution des labels
+
+2. PHASE ENTRAÎNEMENT (map_width_regressor.py)
+    Charger et prétraiter données
+    Split train/val/test
+    Boucle d'entraînement avec epochs
+    Validation périodique
+    Early stopping si plateau
+    Sauvegarde meilleur modèle
+    Évaluation final sur test set
+
+3. PHASE ÉVALUATION
+    Métriques complètes (evaluate_regression.py)
+    Visualisations avancées
+    Rapport détaillé JSON
+
+4. PHASE PRÉDICTION
+    Prédictions individuelles (predict_map_width.py)
+    Prédictions batch (batch_predict_width.py)
+    Export CSV pour intégration
+
+
+ TROUBLESHOOTING
+
+
+Problem: CUDA out of memory
+Solution: Réduire BATCH_SIZE à 16
+
+Problem: MAE n'améliore pas
+Solution: 
+  - Vérifier dataset (pas de biais?)
+  - Augmenter epochs
+  - Réduire learning rate à 1e-5
+
+Problem: Fichiers .npz non trouvés
+Solution: Créer data/ et placer les fichiers dedans
+
+Problem: PyTorch import error
+Solution: pip install --upgrade torch
+
+
+ CHECKLIST AVANT DÉPLOIEMENT
+
+
+ Installation complétée sans erreurs
+ test_system.py réussit
+ Données préparées (500+ fichiers .npz valides)
+ analyze_width_dataset.py génère rapports
+ Entraînement converge (MAE décroit)
+ MAE test < 1.0m  OBJECTIF
+ R² test > 0.90
+ Visualisations générées et correctes
+ Modèle best_map_width_regressor.pth sauvegardé
+ Prédictions batch testées
+ evaluate_regression.py réussit
+
+
+ DOCUMENTATION RECOMMANDÉE
+
+
+Avant de commencer:
+  1. Lire START_HERE.py (ce fichier)
+  2. Consulter INSTALLATION.md pour setup
+  3. Vérifier README_TASK2.md pour détails complets
+
+Pendant l'utilisation:
+  1. Regarder les commentaires dans les fichiers .py
+  2. Consulter PROJECT_SUMMARY_TASK2.py pour architecture
+  3. Analyser les fichiers JSON de sortie
+
+Pour dépannage:
+  1. Exécuter test_system.py
+  2. Consulter INSTALLATION.md section Troubleshooting
+  3. Vérifier les logs dans console
+
+
+ APPRENTISSAGE
+
+
+Ce projet démontre:
+
+ Architecture PyTorch
+  - Blocs convolutifs réutilisables
+  - Modèles modulaires
+  - Forward/backward passes
+
+ Régression Deep Learning
+  - Loss functions pour régression
+  - Évaluation MAE vs MSE
+  - Prédictions continues
+
+ Preprocessing Images
+  - Normalisation
+  - Redimensionnement
+  - Gestion données manquantes
+
+ Entraînement Avancé
+  - Early stopping
+  - Learning rate scheduling
+  - Model checkpointing
+  - Validation strategy
+
+ Évaluation & Visualisation
+  - Métriques de régression
+  - Matplotlib visualisations
+  - Analyse statistique
+
+
+ TRANSFERT DEPUIS TÂCHE 1
+
+
+Réutilisation possible du backbone de Tâche 1:
+  • Même architecture convolutive
+  • Même preprocessing
+  • Seule la tête change (classification → régression)
+
+Code template disponible dans PROJECT_SUMMARY_TASK2.py
+
+
+
+
+                           PRÊT À UTILISER! 
+
+         Consultez START_HERE.py ou README_TASK2.md pour
+              des instructions détaillées étape par étape.
+
+         Première commande: python test_system.py
+
+
+
+Projet: SkipperNDT - Tâche 2: Régression
+Framework: PyTorch 2.0+
+Créé: 2026-02-23

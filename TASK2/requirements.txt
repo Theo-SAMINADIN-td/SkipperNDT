@@ -1,0 +1,18 @@
+# Dépendances pour la Tâche 2: Régression - Prédiction de Map Width
+
+# Deep Learning & NumPy
+torch>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Visualisation & Données
+matplotlib>=3.7.0
+scikit-learn>=1.3.0
+pandas>=2.0.0
+
+# Utilitaires
+tqdm>=4.65.0
+Pillow>=10.0.0
+
+# Optionnel: GPU acceleration (décommenter si CUDA disponible)
+# torch-cuda (pip installe torch avec CPU par défaut)
