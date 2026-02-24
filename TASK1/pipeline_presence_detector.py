@@ -3,131 +3,58 @@ Pipeline Presence Detector - Binary Classification
 Détecte la présence ou l'absence de conduites dans des images magnétiques multicanales
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from torchvision import models
+from torch.utils.data import DataLoader
 import numpy as np
 import glob
-import os
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, recall_score, f1_score, confusion_matrix, classification_report
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import json
 
+from common import BaseNpzDataset, build_efficientnet_v2s_backbone
 
-class PipelineDataset(Dataset):
-    """Dataset pour charger les images .npz avec labels automatiques"""
-    
-    def __init__(self, file_paths, labels, transform=None, target_size=(224, 224)):
-        self.file_paths = file_paths
+
+class PipelineDataset(BaseNpzDataset):
+    """Dataset pour charger les images .npz avec labels automatiques."""
+
+    def __init__(self, file_paths, labels, target_size=(224, 224)):
+        super().__init__(file_paths, target_size)
         self.labels = labels
-        self.transform = transform
-        self.target_size = target_size
-        
-    def __len__(self):
-        return len(self.file_paths)
-    
-    def __getitem__(self, idx):
-        # Charger le fichier .npz
-        data = np.load(self.file_paths[idx], allow_pickle=True)
-        image = data['data']  # Shape: (H, W, 4)
-        
-        # Convertir en float32 si nécessaire (float16 n'est pas supporté par scipy.zoom)
-        if image.dtype == np.float16:
-            image = image.astype(np.float32)
-        
-        # Gérer les NaN (remplacer par 0)
-        image = np.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
-        
-        # Redimensionner l'image
-        image = self._resize_image(image)
-        
-        # Normaliser les données (par canal)
-        image = self._normalize_channels(image)
-        
-        # Convertir en tensor et réorganiser les dimensions (H, W, C) -> (C, H, W)
-        image = torch.from_numpy(image).permute(2, 0, 1).float()
-        
-        label = torch.tensor(self.labels[idx], dtype=torch.float32)
-        
-        return image, label
-    
-    def _resize_image(self, image):
-        """Redimensionne l'image à la taille cible"""
-        from scipy.ndimage import zoom
-        
-        h, w, c = image.shape
-        target_h, target_w = self.target_size
-        
-        # Calculer les facteurs de zoom
-        zoom_h = target_h / h
-        zoom_w = target_w / w
-        
-        # Redimensionner chaque canal
-        resized = zoom(image, (zoom_h, zoom_w, 1), order=1)
-        
-        return resized
-    
-    def _normalize_channels(self, image):
-        """Normalise chaque canal indépendamment"""
-        normalized = np.zeros_like(image)
-        
-        for c in range(image.shape[2]):
-            channel = image[:, :, c]
-            mean = np.mean(channel)
-            std = np.std(channel)
-            
-            if std > 0:
-                normalized[:, :, c] = (channel - mean) / std
-            else:
-                normalized[:, :, c] = channel - mean
-                
-        return normalized
+
+    def _make_target(self, idx):
+        return torch.tensor(self.labels[idx], dtype=torch.float32)
 
 
 class PipelinePresenceClassifier(nn.Module):
     """
-    Modèle CNN pour la classification binaire de la présence de conduites
-    Architecture basée sur EfficientNet-V2-S avec adaptation pour 4 canaux
+    Classifieur binaire de présence de conduites.
+    Architecture EfficientNet-V2-S avec adaptation 4 canaux.
     """
-    
+
     def __init__(self, num_channels=4, pretrained=False):
-        super(PipelinePresenceClassifier, self).__init__()
-        
-        # Charger EfficientNet-V2-S
-        weights = models.EfficientNet_V2_S_Weights.DEFAULT if pretrained else None
-        backbone = models.efficientnet_v2_s(weights=weights)
-        
-        # Adapter la première couche Conv pour accepter num_channels au lieu de 3
-        old_conv = backbone.features[0][0]
-        assert isinstance(old_conv, nn.Conv2d)
-        backbone.features[0][0] = nn.Conv2d(
-            num_channels, old_conv.out_channels,
-            kernel_size=old_conv.kernel_size,
-            stride=old_conv.stride,
-            padding=old_conv.padding,
-            bias=False
-        )
-        
-        # Remplacer le classifieur par une tête de classification binaire
-        in_features = backbone.classifier[1].in_features
-        
-        backbone.classifier = nn.Sequential(
-            nn.Dropout(0.5, inplace=True),
+        super().__init__()
+        backbone, in_features = build_efficientnet_v2s_backbone(num_channels, pretrained)
+        self.features = backbone
+
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.5),
             nn.Linear(in_features, 256),
             nn.ReLU(inplace=True),
             nn.Dropout(0.3),
             nn.Linear(256, 1),
-            nn.Sigmoid()
+            nn.Sigmoid(),
         )
-        
-        self.model = backbone
-        
+
     def forward(self, x):
-        return self.model(x)
+        return self.classifier(self.features(x))
 
 
 def load_data_with_labels(data_dir):

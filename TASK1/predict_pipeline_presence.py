@@ -3,51 +3,20 @@ Script de prédiction pour détecter la présence de conduites
 Usage: python predict_pipeline_presence.py --input <file.npz>
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 import torch
-import numpy as np
 import argparse
-from scipy.ndimage import zoom
 from pipeline_presence_detector import PipelinePresenceClassifier
+from common import load_and_preprocess
 
 
 def preprocess_image(image_path, target_size=(224, 224)):
-    """
-    Prétraite une image .npz pour la prédiction
-    """
-    # Charger l'image
-    data = np.load(image_path, allow_pickle=True)
-    image = data['data']  # Shape: (H, W, 4)
-    
-    # Convertir en float32 si nécessaire (float16 n'est pas supporté par scipy.zoom)
-    if image.dtype == np.float16:
-        image = image.astype(np.float32)
-    
-    # Gérer les NaN
-    image = np.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
-    
-    # Redimensionner l'image
-    h, w, c = image.shape
-    target_h, target_w = target_size
-    zoom_h = target_h / h
-    zoom_w = target_w / w
-    resized = zoom(image, (zoom_h, zoom_w, 1), order=1)
-    
-    # Normaliser par canal
-    normalized = np.zeros_like(resized)
-    for c in range(resized.shape[2]):
-        channel = resized[:, :, c]
-        mean = np.mean(channel)
-        std = np.std(channel)
-        if std > 0:
-            normalized[:, :, c] = (channel - mean) / std
-        else:
-            normalized[:, :, c] = channel - mean
-    
-    # Convertir en tensor (H, W, C) -> (C, H, W)
-    image_tensor = torch.from_numpy(normalized).permute(2, 0, 1).float()
-    image_tensor = image_tensor.unsqueeze(0)  # Ajouter batch dimension
-    
-    return image_tensor
+    """Prétraite une image .npz pour la prédiction."""
+    tensor = load_and_preprocess(image_path, target_size)
+    return tensor.unsqueeze(0)  # add batch dimension
 
 
 def predict(model_path, image_path, device='cpu'):
