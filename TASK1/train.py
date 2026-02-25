@@ -4,14 +4,13 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
-import glob
 import os
+from pathlib import Path
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, recall_score, f1_score, confusion_matrix, classification_report
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import json
-import zipfile
 
 from torchvision import models
 class PipelineDataset(Dataset):
@@ -20,11 +19,9 @@ class PipelineDataset(Dataset):
     def __init__(self, file_paths, labels, transform=None, target_size=(224, 224)):
         self.file_paths = file_paths
         self.labels = labels
-        self.transform = transform
-        self.target_size = target_size
 
     def __len__(self):
-        return len(self.file_paths)
+        return len(self.npy_files)
 
     def __getitem__(self, idx):
         # Charger le fichier .npz
@@ -118,58 +115,45 @@ class PipelinePresenceClassifier(nn.Module):
 
 
 
+# ==========================================
+# 4. FONCTIONS TRAIN/VAL
+# ==========================================
 def train_epoch(model, dataloader, criterion, optimizer, device):
-    """Entraîne le modèle pour une époque"""
     model.train()
     running_loss = 0.0
-    all_predictions = []
-    all_labels = []
+    all_preds, all_labels = [], []
 
-    for images, labels in tqdm(dataloader, desc="Training"):
-        images = images.to(device)
-        labels = labels.to(device).unsqueeze(1)
-
-        # Forward pass
+    for images, labels in tqdm(dataloader, desc="Training", leave=False):
+        images, labels = images.to(device), labels.to(device).unsqueeze(1)
+        
         optimizer.zero_grad()
         outputs = model(images)
         loss = criterion(outputs, labels)
-
-        # Backward pass
         loss.backward()
         optimizer.step()
 
         running_loss += loss.item()
-
-        # Prédictions
-        predictions = (outputs > 0.5).float()
-        all_predictions.extend(predictions.cpu().numpy())
+        all_preds.extend((outputs > 0.5).float().cpu().numpy())
         all_labels.extend(labels.cpu().numpy())
 
-    epoch_loss = running_loss / len(dataloader)
-    accuracy = accuracy_score(all_labels, all_predictions)
-
-    return epoch_loss, accuracy
+    return running_loss / len(dataloader), accuracy_score(all_labels, all_preds)
 
 def validate_epoch(model, dataloader, criterion, device):
-    """Valide le modèle"""
     model.eval()
     running_loss = 0.0
-    all_predictions = []
-    all_labels = []
-    all_probabilities = []
+    all_preds, all_labels = [], []
 
     with torch.no_grad():
-        for images, labels in tqdm(dataloader, desc="Validation"):
-            images = images.to(device)
-            labels = labels.to(device).unsqueeze(1)
-
+        for images, labels in tqdm(dataloader, desc="Validation", leave=False):
+            images, labels = images.to(device), labels.to(device).unsqueeze(1)
             outputs = model(images)
-            loss = criterion(outputs, labels)
-
+            loss = criterion(outputs, labels) # BCEWithLogits inclut Sigmoid si on n'a pas mis Sigmoid
+            # NOTE: Dans votre modèle original il y a un Sigmoid à la fin, 
+            # donc il faut utiliser BCELoss, pas BCEWithLogitsLoss, OU retirer le Sigmoid du modèle.
+            # Ici je garde votre modèle (avec Sigmoid) -> BCELoss
+            
             running_loss += loss.item()
-
-            predictions = (outputs > 0.5).float()
-            all_predictions.extend(predictions.cpu().numpy())
+            all_preds.extend((outputs > 0.5).float().cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
             all_probabilities.extend(outputs.cpu().numpy())
 
