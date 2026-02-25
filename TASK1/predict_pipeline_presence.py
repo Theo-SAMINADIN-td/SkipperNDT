@@ -29,7 +29,7 @@ def predict(model_path, image_path, device='cpu'):
     """
     # Charger le modèle
     model = PipelinePresenceClassifier(num_channels=4)
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.to(device)
     model.eval()

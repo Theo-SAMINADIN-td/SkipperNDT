@@ -7,6 +7,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -64,23 +65,26 @@ def load_data_with_labels(data_dir):
     Label 0: no_pipe (absence de conduite)
     Label 1: perfect, missed, ou tout autre (présence de conduite)
     """
-    all_files = glob.glob(os.path.join(data_dir, '*.npz'))
-    
-    file_paths = []
-    labels = []
-    
-    for file_path in all_files:
-        filename = os.path.basename(file_path)
-        
-        # Extraire le label du nom de fichier
-        if 'no_pipe' in filename:
-            label = 0  # Absence de conduite
+    csv_path = os.path.join(data_dir, 'pipe_detection_label.csv')
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Label CSV not found: {csv_path}")
+
+    df = pd.read_csv(csv_path, sep=';')
+    # Keep only samples with a pipe present
+    df = df.reset_index(drop=True)
+
+    file_paths, labels = [], []
+    missing = 0
+
+    for _, row in df.iterrows():
+        fpath = os.path.join(data_dir, row['field_file'])
+        if os.path.exists(fpath):
+            file_paths.append(fpath)
+            labels.append(float(row['label']))
         else:
-            label = 1  # Présence de conduite
-        
-        file_paths.append(file_path)
-        labels.append(label)
-    
+            missing += 1
+
+    print(f"  ✓ {len(file_paths)} samples loaded from CSV | {missing} files missing on disk")
     return file_paths, labels
 
 
@@ -294,9 +298,9 @@ def main():
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'val_accuracy': val_acc,
-                'val_recall': val_recall,
-                'val_f1': val_f1,
+                'val_accuracy': float(val_acc),
+                'val_recall': float(val_recall),
+                'val_f1': float(val_f1),
             }, 'best_pipeline_classifier.pth')
             print(f"✓ Best model saved (Recall: {val_recall:.4f})")
     
@@ -305,7 +309,7 @@ def main():
     
     # Évaluation finale sur le test set
     print("\n5. Final evaluation on test set...")
-    model.load_state_dict(torch.load('best_pipeline_classifier.pth')['model_state_dict'])
+    model.load_state_dict(torch.load('best_pipeline_classifier.pth', weights_only=False)['model_state_dict'])
     
     test_loss, test_acc, test_recall, test_f1, test_preds, test_true = validate_epoch(
         model, test_loader, criterion, device

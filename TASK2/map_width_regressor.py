@@ -13,57 +13,15 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import numpy as np
-import glob
+import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import json
 
-from common import BaseNpzDataset, build_efficientnet_v2s_backbone, fill_nan_with_median
+from common import BaseNpzDataset, build_efficientnet_v2s_backbone
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Label extraction: FWHM of magnetic anomaly (cross-track profile)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def estimate_magnetic_width(img, pixel_size=0.2):
-    """
-    Estime la largeur de la zone d'influence magnétique via FWHM
-    (Full Width at Half Maximum) sur le canal Norm.
-
-    Args:
-        img:        np.ndarray (H, W, 4), float32, NaN-free
-        pixel_size: résolution spatiale en mètres/pixel (défaut 0.2m)
-
-    Returns:
-        width_m (float) dans [5, 80] ou None si non estimable
-    """
-    norm_ch = img[:, :, 3]
-
-    best_width = None
-    best_snr = -1.0
-
-    for axis in [0, 1]:          # axis=0 → profil selon colonnes, axis=1 → lignes
-        profile = np.nanmean(norm_ch, axis=axis)
-        profile = np.nan_to_num(profile, nan=0.0)
-
-        baseline = np.percentile(profile, 10)
-        peak = np.max(profile)
-        snr = peak - baseline
-
-        if snr < 1.0:
-            continue
-
-        half_max = baseline + 0.5 * snr
-        above = np.sum(profile > half_max)
-        width_m = above * pixel_size
-
-        if 5.0 <= width_m <= 80.0 and snr > best_snr:
-            best_snr = snr
-            best_width = width_m
-
-    return best_width
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,7 +29,11 @@ def estimate_magnetic_width(img, pixel_size=0.2):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MapWidthDataset(BaseNpzDataset):
-    """Dataset pour la régression de la largeur de carte magnétique."""
+    """
+    Dataset qui retourne (image_tensor, meta_tensor, width_target).
+    meta = [original_H_m, original_W_m]  — donne au modèle l'échelle physique
+    que le redimensionnement à 224x224 efface, sans fuiter la cible.
+    """
 
     def __init__(self, file_paths, widths, target_size=(224, 224)):
         super().__init__(file_paths, target_size)
@@ -79,6 +41,20 @@ class MapWidthDataset(BaseNpzDataset):
 
     def _make_target(self, idx):
         return torch.tensor(self.widths[idx], dtype=torch.float32)
+
+    def __getitem__(self, idx):
+        # Load raw to capture original spatial dimensions
+        raw = np.load(self.file_paths[idx], allow_pickle=True)['data']
+        orig_h, orig_w = raw.shape[:2]
+
+        image, target = super().__getitem__(idx)
+
+        # Scale metadata: [H_m, W_m] only — no target leakage
+        meta = torch.tensor(
+            [orig_h * 0.2, orig_w * 0.2],
+            dtype=torch.float32
+        )
+        return image, meta, target
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -88,60 +64,63 @@ class MapWidthDataset(BaseNpzDataset):
 class MapWidthRegressor(nn.Module):
     """
     Régression de largeur magnétique basée sur EfficientNet-V2-S.
-    Adapté pour 4 canaux d'entrée, sortie scalaire continue.
+    Fusionne les features CNN avec les métadonnées physiques (H_m, W_m, fwhm)
+    pour permettre au modèle de raisonner sur l'échelle réelle.
     """
 
-    def __init__(self, num_channels=4, pretrained=False):
+    def __init__(self, num_channels: int = 4, meta_dim: int = 2, pretrained: bool = False):
         super().__init__()
         backbone, in_features = build_efficientnet_v2s_backbone(num_channels, pretrained)
         self.features = backbone
 
-        # Tête de régression (sortie continue, pas de sigmoid)
+        # Fusion: CNN features + meta
+        fused = in_features + meta_dim
         self.regressor = nn.Sequential(
-            nn.Dropout(0.4),
-            nn.Linear(in_features, 256),
+            nn.Dropout(0.5),
+            nn.Linear(fused, 256),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.2),
+            nn.Dropout(0.3),
             nn.Linear(256, 64),
             nn.ReLU(inplace=True),
             nn.Linear(64, 1),
         )
 
-    def forward(self, x):
-        return self.regressor(self.features(x)).squeeze(1)   # (B,) scalaire
+    def forward(self, x, meta):
+        feats = self.features(x)           # (B, in_features)
+        fused = torch.cat([feats, meta], dim=1)  # (B, in_features + meta_dim)
+        return self.regressor(fused).squeeze(1)  # (B,)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data loading
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_data_with_widths(data_dir, pixel_size=0.2):
+def load_data_with_widths(data_dir):
     """
-    Charge les fichiers .npz et estime la largeur magnétique via FWHM.
-    Seuls les fichiers avec une largeur estimable (5-80m) sont conservés.
+    Charge les labels depuis pipe_detection_label.csv (ground-truth de simulation).
+    Seuls les fichiers avec label=1 (présence de conduite) sont conservés.
+    Le fichier CSV est délimité par des points-virgules.
     """
-    all_files = glob.glob(os.path.join(data_dir, '*.npz'))
-    # Exclure les fichiers sans conduite (pas de signal magnétique à mesurer)
-    pipe_files = [f for f in all_files if 'no_pipe' not in os.path.basename(f)]
+    csv_path = os.path.join(data_dir, 'pipe_detection_label.csv')
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Label CSV not found: {csv_path}")
+
+    df = pd.read_csv(csv_path, sep=';')
+    # Keep only samples with a pipe present
+    df = df[df['label'] == 1].reset_index(drop=True)
 
     file_paths, widths = [], []
-    skipped = 0
+    missing = 0
 
-    print(f"Estimating widths for {len(pipe_files)} files (this may take a moment)...")
-    for file_path in tqdm(pipe_files, desc="Labelling"):
-        try:
-            img = np.load(file_path, allow_pickle=True)['data'].astype(np.float32)
-            img = fill_nan_with_median(img)
-            width_m = estimate_magnetic_width(img, pixel_size)
-            if width_m is not None:
-                file_paths.append(file_path)
-                widths.append(width_m)
-            else:
-                skipped += 1
-        except Exception:
-            skipped += 1
+    for _, row in df.iterrows():
+        fpath = os.path.join(data_dir, row['field_file'])
+        if os.path.exists(fpath):
+            file_paths.append(fpath)
+            widths.append(float(row['width_m']))
+        else:
+            missing += 1
 
-    print(f"  ✓ {len(file_paths)} usable samples | {skipped} skipped (no estimable width)")
+    print(f"  ✓ {len(file_paths)} samples loaded from CSV | {missing} files missing on disk")
     return file_paths, widths
 
 
@@ -154,12 +133,13 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
     running_loss = 0.0
     all_preds, all_targets = [], []
 
-    for images, widths in tqdm(dataloader, desc="Training"):
+    for images, meta, widths in tqdm(dataloader, desc="Training"):
         images  = images.to(device)
+        meta    = meta.to(device)
         widths  = widths.to(device)
 
         optimizer.zero_grad()
-        outputs = model(images)
+        outputs = model(images, meta)
         loss    = criterion(outputs, widths)
         loss.backward()
         optimizer.step()
@@ -178,11 +158,12 @@ def validate_epoch(model, dataloader, criterion, device):
     all_preds, all_targets = [], []
 
     with torch.no_grad():
-        for images, widths in tqdm(dataloader, desc="Validation"):
+        for images, meta, widths in tqdm(dataloader, desc="Validation"):
             images = images.to(device)
+            meta   = meta.to(device)
             widths = widths.to(device)
 
-            outputs = model(images)
+            outputs = model(images, meta)
             loss    = criterion(outputs, widths)
 
             running_loss += loss.item()
@@ -233,7 +214,7 @@ def plot_predictions_vs_targets(preds, targets, save_path='predictions_vs_target
     # Scatter
     axes[0].scatter(targets, preds, alpha=0.5, s=20)
     lims = [max(0, min(targets.min(), preds.min()) - 2),
-            min(85,  max(targets.max(), preds.max()) + 2)]
+            max(targets.max(), preds.max()) + 2]
     axes[0].plot(lims, lims, 'r--', label='Perfect prediction')
     axes[0].set_xlabel('True width (m)')
     axes[0].set_ylabel('Predicted width (m)')
@@ -262,19 +243,19 @@ def plot_predictions_vs_targets(preds, targets, save_path='predictions_vs_target
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    DATA_DIR      = '../Training_database_float16'
+    DATA_DIR      = 'Training_database_float16'
     BATCH_SIZE    = 16
-    NUM_EPOCHS    = 50
-    LEARNING_RATE = 0.001
+    NUM_EPOCHS    = 100
+    LEARNING_RATE = 3e-4
+    EARLY_STOP_PATIENCE = 15
     TARGET_SIZE   = (224, 224)
-    PIXEL_SIZE    = 0.2   # metres/pixel
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # 1. Load & label data
-    print("\n1. Loading & labelling data...")
-    file_paths, widths = load_data_with_widths(DATA_DIR, PIXEL_SIZE)
+    print("\n1. Loading labels from CSV...")
+    file_paths, widths = load_data_with_widths(DATA_DIR)
     print(f"Total usable samples : {len(file_paths)}")
     print(f"Width range          : {min(widths):.1f}m – {max(widths):.1f}m")
     print(f"Width mean ± std     : {np.mean(widths):.1f}m ± {np.std(widths):.1f}m")
@@ -302,7 +283,7 @@ def main():
     print("\n3. Creating model (EfficientNet-V2-S for regression)...")
     model     = MapWidthRegressor(num_channels=4).to(device)
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.5)
 
     # 5. Training loop
@@ -313,6 +294,7 @@ def main():
         'val_rmse': [], 'val_r2': []
     }
     best_mae, best_epoch = float('inf'), 0
+    early_stop_counter = 0
 
     for epoch in range(NUM_EPOCHS):
         print(f"\nEpoch {epoch+1}/{NUM_EPOCHS}")
@@ -336,21 +318,28 @@ def main():
         if val_mae < best_mae:
             best_mae   = val_mae
             best_epoch = epoch + 1
+            early_stop_counter = 0
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'val_mae':  val_mae,
-                'val_rmse': val_rmse,
-                'val_r2':   val_r2,
+                'val_mae':  float(val_mae),
+                'val_rmse': float(val_rmse),
+                'val_r2':   float(val_r2),
             }, 'best_map_width_regressor.pth')
             print(f"✓ Best model saved (MAE: {val_mae:.3f}m)")
+        else:
+            early_stop_counter += 1
+            print(f"  No improvement ({early_stop_counter}/{EARLY_STOP_PATIENCE})")
+            if early_stop_counter >= EARLY_STOP_PATIENCE:
+                print(f"\nEarly stopping at epoch {epoch+1}")
+                break
 
     plot_training_history(history)
 
     # 6. Final evaluation
     print("\n5. Final evaluation on test set...")
-    model.load_state_dict(torch.load('best_map_width_regressor.pth')['model_state_dict'])
+    model.load_state_dict(torch.load('best_map_width_regressor.pth', weights_only=False)['model_state_dict'])
     test_loss, test_mae, test_rmse, test_r2, test_preds, test_targets = validate_epoch(
         model, test_loader, criterion, device
     )
