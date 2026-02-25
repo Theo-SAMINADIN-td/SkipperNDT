@@ -11,6 +11,7 @@ from sklearn.metrics import accuracy_score, recall_score, f1_score, confusion_ma
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import json
+import zipfile
 
 
 class PipelineDataset(Dataset):
@@ -49,7 +50,7 @@ class PipelineDataset(Dataset):
 
         return image, label
 
-    def _fill_nan_with_median(image: np.ndarray) -> np.ndarray:
+    def _fill_nan_with_median(self, image: np.ndarray) -> np.ndarray:
       """Remplace NaN/Inf par la médiane de chaque canal (in-place, returns image)."""
       for c in range(image.shape[2]):
           ch = image[:, :, c]
@@ -92,7 +93,6 @@ class PipelineDataset(Dataset):
                 normalized[:, :, c] = channel - mean
 
         return normalized
-
 
 
 
@@ -158,36 +158,6 @@ class PipelinePresenceClassifier(nn.Module):
         x = self.classifier(x)
         return x
 
-
-
-def load_data_with_labels(data_dir):
-    """
-    Charge les fichiers .npz et extrait les labels à partir des noms de fichiers
-
-    Label 0: no_pipe (absence de conduite)
-    Label 1: perfect, missed, ou tout autre (présence de conduite)
-    """
-    csv_path = os.path.join(data_dir, 'pipe_detection_label.csv')
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"Label CSV not found: {csv_path}")
-
-    df = pd.read_csv(csv_path, sep=';')
-    # Keep only samples with a pipe present
-    df = df.reset_index(drop=True)
-
-    file_paths, labels = [], []
-    missing = 0
-
-    for _, row in df.iterrows():
-        fpath = os.path.join(data_dir, row['field_file'])
-        if os.path.exists(fpath):
-            file_paths.append(fpath)
-            labels.append(float(row['label']))
-        else:
-            missing += 1
-
-    print(f"  ✓ {len(file_paths)} samples loaded from CSV | {missing} files missing on disk")
-    return file_paths, labels
 
 
 def train_epoch(model, dataloader, criterion, optimizer, device):
@@ -300,162 +270,194 @@ def plot_training_history(history, save_path='training_history.png'):
     plt.close()
 
 
+def load_data_with_labels(data_dir):
+    """
+    Charge les fichiers .npz et extrait les labels à partir des noms de fichiers
 
-def main():
-    # Configuration
-    DATA_DIR = '/home/tsaminadin/Documents/HETIC/SkipperNDT/Training_database_float16'
-    BATCH_SIZE = 16
-    NUM_EPOCHS = 50
-    LEARNING_RATE = 0.001
-    TARGET_SIZE = (224, 224)
+    Label 0: no_pipe (absence de conduite)
+    Label 1: perfect, missed, ou tout autre (présence de conduite)
+    """
+    csv_path = os.path.join(data_dir, 'pipe_detection_label.csv')
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Label CSV not found: {csv_path}")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    df = pd.read_csv(csv_path, sep=';')
+    # Keep only samples with a pipe present
+    # df = df.reset_index(drop=True)
 
-    # Charger les données
-    print("\n1. Loading data...")
-    file_paths, labels = load_data_with_labels(DATA_DIR)
-    print(f"Total samples: {len(file_paths)}")
-    print(f"Class 0 (no pipe): {labels.count(0)}")
-    print(f"Class 1 (with pipe): {labels.count(1)}")
+    file_paths, labels = [], []
+    missing = 0
 
-    # Split train/validation/test
-    train_files, temp_files, train_labels, temp_labels = train_test_split(
-        file_paths, labels, test_size=0.3, random_state=42, stratify=labels
-    )
+    for _, row in df.iterrows():
+        fpath = os.path.join(data_dir, row['field_file'])
+        if os.path.exists(fpath):
+            file_paths.append(fpath)
+            labels.append(float(row['label']))
+        else:
+            missing += 1
+    print(f"  ✓ {len(file_paths)} samples loaded from CSV | {missing} files missing on disk")
+    return file_paths, labels
 
-    val_files, test_files, val_labels, test_labels = train_test_split(
-        temp_files, temp_labels, test_size=0.5, random_state=42, stratify=temp_labels
-    )
 
-    print(f"\nTrain samples: {len(train_files)}")
-    print(f"Validation samples: {len(val_files)}")
-    print(f"Test samples: {len(test_files)}")
 
-    print("\n2. Creating datasets...")
-    train_dataset = PipelineDataset(train_files, train_labels, target_size=TARGET_SIZE)
-    val_dataset = PipelineDataset(val_files, val_labels, target_size=TARGET_SIZE)
-    test_dataset = PipelineDataset(test_files, test_labels, target_size=TARGET_SIZE)
+# Configuration
+DATA_DIR = '/content/drive/MyDrive/HETIC/SkipperNDT/Training_database_float16.zip'
+BATCH_SIZE = 16
+NUM_EPOCHS = 50
+LEARNING_RATE = 0.001
+TARGET_SIZE = (224, 224)
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
+extraction_path = "/content/sample_data/skipper_data/"
 
-    print("\n3. Creating model...")
-    model = PipelinePresenceClassifier(num_channels=4).to(device)
+# os.makedirs(extraction_path, exist_ok=True)
+# with zipfile.ZipFile(DATA_DIR, "r") as zip_object:
+#   zip_object.extractall(extraction_path)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
-    # Loss avec pondération pour gérer le déséquilibre des classes
-    num_no_pipe = train_labels.count(0)
-    num_with_pipe = train_labels.count(1)
-    weight = num_no_pipe / num_with_pipe if num_with_pipe > 0 else 1.0
+# Charger les données
+print("\n1. Loading data...")
+file_paths, labels = load_data_with_labels("Training_database_float16")
+print(f"Total samples: {len(file_paths)}")
+print(f"Class 0 (no pipe): {labels.count(0)}")
+print(f"Class 1 (with pipe): {labels.count(1)}")
 
-    # Utiliser BCEWithLogitsLoss avec pondération pour privilégier le recall
-    criterion = nn.BCEWithLogitsLoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.5)
+
+
+# Split train/validation/test
+train_files, temp_files, train_labels, temp_labels = train_test_split(
+    file_paths, labels, test_size=0.3, random_state=42, stratify=labels
+)
+
+val_files, test_files, val_labels, test_labels = train_test_split(
+    temp_files, temp_labels, test_size=0.5, random_state=42, stratify=temp_labels
+)
+
+print(f"\nTrain samples: {len(train_files)}")
+print(f"Validation samples: {len(val_files)}")
+print(f"Test samples: {len(test_files)}")
+
+print("\n2. Creating datasets...")
+train_dataset = PipelineDataset(train_files, train_labels, target_size=TARGET_SIZE)
+val_dataset = PipelineDataset(val_files, val_labels, target_size=TARGET_SIZE)
+test_dataset = PipelineDataset(test_files, test_labels, target_size=TARGET_SIZE)
+
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
+val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
+test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
+
+print("\n3. Creating model...")
+model = PipelinePresenceClassifier(num_channels=4).to(device)
+
+# Loss avec pondération pour gérer le déséquilibre des classes
+num_no_pipe = train_labels.count(0)
+num_with_pipe = train_labels.count(1)
+weight = num_no_pipe / num_with_pipe if num_with_pipe > 0 else 1.0
+
+# Utiliser BCEWithLogitsLoss avec pondération pour privilégier le recall
+criterion = nn.BCEWithLogitsLoss()
+optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.5)
+
+# Entraînement
+print("\n4. Training model...")
+history = {
+    'train_loss': [], 'val_loss': [],
+    'train_acc': [], 'val_acc': [],
+    'val_recall': [], 'val_f1': []
+}
+
+best_recall = 0.0
+best_epoch = 0
+
+for epoch in range(NUM_EPOCHS):
+    print(f"\nEpoch {epoch+1}/{NUM_EPOCHS}")
 
     # Entraînement
-    print("\n4. Training model...")
-    history = {
-        'train_loss': [], 'val_loss': [],
-        'train_acc': [], 'val_acc': [],
-        'val_recall': [], 'val_f1': []
-    }
+    train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
 
-    best_recall = 0.0
-    best_epoch = 0
-
-    for epoch in range(NUM_EPOCHS):
-        print(f"\nEpoch {epoch+1}/{NUM_EPOCHS}")
-
-        # Entraînement
-        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
-
-        # Validation
-        val_loss, val_acc, val_recall, val_f1, val_preds, val_true = validate_epoch(
-            model, val_loader, criterion, device
-        )
-
-        # Mettre à jour le scheduler
-        scheduler.step(val_loss)
-
-        # Sauvegarder l'historique
-        history['train_loss'].append(train_loss)
-        history['val_loss'].append(val_loss)
-        history['train_acc'].append(train_acc)
-        history['val_acc'].append(val_acc)
-        history['val_recall'].append(val_recall)
-        history['val_f1'].append(val_f1)
-
-        # Afficher les résultats
-        print(f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
-        print(f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | Val Recall: {val_recall:.4f} | Val F1: {val_f1:.4f}")
-
-        # Sauvegarder le meilleur modèle (basé sur le recall)
-        if val_recall > best_recall:
-            best_recall = val_recall
-            best_epoch = epoch + 1
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_accuracy': val_acc,
-                'val_recall': val_recall,
-                'val_f1': val_f1,
-            }, 'best_pipeline_classifier.pth')
-            print(f"✓ Best model saved (Recall: {val_recall:.4f})")
-
-    # Sauvegarder l'historique
-    plot_training_history(history)
-
-    # Évaluation finale sur le test set
-    print("\n5. Final evaluation on test set...")
-    model.load_state_dict(torch.load('best_pipeline_classifier.pth')['model_state_dict'])
-
-    test_loss, test_acc, test_recall, test_f1, test_preds, test_true = validate_epoch(
-        model, test_loader, criterion, device
+    # Validation
+    val_loss, val_acc, val_recall, val_f1, val_preds, val_true = validate_epoch(
+        model, val_loader, criterion, device
     )
 
-    print(f"\n{'='*50}")
-    print(f"FINAL TEST RESULTS")
-    print(f"{'='*50}")
-    print(f"Accuracy: {test_acc:.4f} (Target: > 0.92)")
-    print(f"Recall: {test_recall:.4f} (Target: > 0.95)")
-    print(f"F1-Score: {test_f1:.4f}")
-    print(f"Best epoch: {best_epoch}")
+    # Mettre à jour le scheduler
+    scheduler.step(val_loss)
 
-    # Matrice de confusion
-    cm = confusion_matrix(test_true, test_preds)
-    print(f"\nConfusion Matrix:")
-    print(cm)
+    # Sauvegarder l'historique
+    history['train_loss'].append(train_loss)
+    history['val_loss'].append(val_loss)
+    history['train_acc'].append(train_acc)
+    history['val_acc'].append(val_acc)
+    history['val_recall'].append(val_recall)
+    history['val_f1'].append(val_f1)
 
-    # Rapport de classification
-    print(f"\nClassification Report:")
-    print(classification_report(test_true, test_preds, target_names=['No Pipe', 'With Pipe']))
+    # Afficher les résultats
+    print(f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
+    print(f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | Val Recall: {val_recall:.4f} | Val F1: {val_f1:.4f}")
 
-    # Sauvegarder les résultats
-    results = {
-        'test_accuracy': float(test_acc),
-        'test_recall': float(test_recall),
-        'test_f1': float(test_f1),
-        'best_epoch': best_epoch,
-        'confusion_matrix': cm.tolist(),
-        'target_accuracy': 0.92,
-        'target_recall': 0.95,
-        'objectives_met': {
-            'accuracy': test_acc > 0.92,
-            'recall': test_recall > 0.95
-        }
+    # Sauvegarder le meilleur modèle (basé sur le recall)
+    if val_recall > best_recall:
+        best_recall = val_recall
+        best_epoch = epoch + 1
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'val_accuracy': val_acc,
+            'val_recall': val_recall,
+            'val_f1': val_f1,
+        }, 'best_pipeline_classifier.pth')
+        print(f"✓ Best model saved (Recall: {val_recall:.4f})")
+
+# Sauvegarder l'historique
+plot_training_history(history)
+
+# Évaluation finale sur le test set
+print("\n5. Final evaluation on test set...")
+model.load_state_dict(torch.load('best_pipeline_classifier.pth')['model_state_dict'])
+
+test_loss, test_acc, test_recall, test_f1, test_preds, test_true = validate_epoch(
+    model, test_loader, criterion, device
+)
+
+print(f"\n{'='*50}")
+print(f"FINAL TEST RESULTS")
+print(f"{'='*50}")
+print(f"Accuracy: {test_acc:.4f} (Target: > 0.92)")
+print(f"Recall: {test_recall:.4f} (Target: > 0.95)")
+print(f"F1-Score: {test_f1:.4f}")
+print(f"Best epoch: {best_epoch}")
+
+# Matrice de confusion
+cm = confusion_matrix(test_true, test_preds)
+print(f"\nConfusion Matrix:")
+print(cm)
+
+# Rapport de classification
+print(f"\nClassification Report:")
+print(classification_report(test_true, test_preds, target_names=['No Pipe', 'With Pipe']))
+
+# Sauvegarder les résultats
+results = {
+    'test_accuracy': float(test_acc),
+    'test_recall': float(test_recall),
+    'test_f1': float(test_f1),
+    'best_epoch': best_epoch,
+    'confusion_matrix': cm.tolist(),
+    'target_accuracy': 0.92,
+    'target_recall': 0.95,
+    'objectives_met': {
+        'accuracy': test_acc > 0.92,
+        'recall': test_recall > 0.95
     }
+}
 
-    with open('test_results.json', 'w') as f:
-        json.dump(results, f, indent=4)
+with open('test_results.json', 'w') as f:
+    json.dump(results, f, indent=4)
 
-    print("\n✓ Training complete! Results saved.")
-    print(f"  - Model: best_pipeline_classifier.pth")
-    print(f"  - History plot: training_history.png")
-    print(f"  - Results: test_results.json")
+print("\n✓ Training complete! Results saved.")
+print(f"  - Model: best_pipeline_classifier.pth")
+print(f"  - History plot: training_history.png")
+print(f"  - Results: test_results.json")
 
-
-if __name__ == "__main__":
-    main()
