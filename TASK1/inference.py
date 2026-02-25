@@ -7,7 +7,7 @@ import torch
 import numpy as np
 import argparse
 from scipy.ndimage import zoom
-from pipeline_presence_detector import PipelinePresenceClassifier
+from train import PipelinePresenceClassifier
 
 
 def preprocess_image(image_path, target_size=(224, 224)):
