@@ -1,3 +1,5 @@
+import time
+
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -107,11 +109,9 @@ class PipelinePresenceClassifier(nn.Module):
         
         num_ftrs = self.resnet.fc.in_features
         self.resnet.fc = nn.Linear(num_ftrs, 1)
-        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        x = self.resnet(x)
-        return self.sigmoid(x)
+        return self.resnet(x)
 
 
 
@@ -251,8 +251,8 @@ if __name__ == "__main__":
     # Configuration
     DATA_DIR = 'Training_database_float16.zip'
     BATCH_SIZE = 16
-    NUM_EPOCHS = 10
-    LEARNING_RATE = 0.0001
+    NUM_EPOCHS = 30
+    LEARNING_RATE = 1e-4
     TARGET_SIZE = (224, 224)
 
     extraction_path = "/content/sample_data/skipper_data/"
@@ -303,10 +303,10 @@ if __name__ == "__main__":
     weight = num_no_pipe / num_with_pipe if num_with_pipe > 0 else 1.0
 
     # Utiliser BCEWithLogitsLoss avec pondération pour privilégier le recall
-    criterion = nn.BCELoss()
+    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(weight)).to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
-
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
+    
     # Entraînement
     print("\n4. Training model...")
     history = {
@@ -345,37 +345,24 @@ if __name__ == "__main__":
         print(f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | Val Recall: {val_recall:.4f} | Val F1: {val_f1:.4f}")
 
         # Sauvegarder le meilleur modèle (basé sur le recall)
-        if val_recall > best_recall:
-            best_recall = val_recall
-            best_epoch = epoch + 1
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_accuracy': val_acc,
-                'val_recall': val_recall,
-                'val_f1': val_f1,
-            }, f'V2_pipeline_classifier_epoch{epoch+1}.pth')
-            print(f"✓ Best model saved (Recall: {val_recall:.4f})")
 
-    
-        if epoch == NUM_EPOCHS - 1:
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_accuracy': val_acc,
-                'val_recall': val_recall,
-                'val_f1': val_f1,
-            }, f'V2_final_pipeline_classifier_epoch{epoch+1}.pth')
-            print(f"✓ Final model saved (Epoch {epoch+1})")
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'val_accuracy': val_acc,
+            'val_recall': val_recall,
+            'val_f1': val_f1,
+        }, f'V2_pipeline_classifier_epoch{epoch+1}_{time.time()}.pth')
+        print(f"✓ Best model saved (Recall: {val_recall:.4f})")
+
 
     # Sauvegarder l'historique
     plot_training_history(history)
 
     # Évaluation finale sur le test set
     print("\n5. Final evaluation on test set...")
-    model.load_state_dict(torch.load('best_pipeline_classifier.pth')['model_state_dict'])
+    model.load_state_dict(torch.load(f'V2_pipeline_classifier_epoch{NUM_EPOCHS}_{time.time()}.pth')['model_state_dict'])
 
     test_loss, test_acc, test_recall, test_f1, test_preds, test_true = validate_epoch(
         model, test_loader, criterion, device
