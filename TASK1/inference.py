@@ -71,75 +71,9 @@ def _normalize_channels(image):
 
     return normalized
 
-        # C. Gestion cas limite (Image trop petite)
-        if h < PATCH_SIZE or w < PATCH_SIZE:
-             # Padding simple avec des zéros
-             pad_h = max(0, PATCH_SIZE - h)
-             pad_w = max(0, PATCH_SIZE - w)
-             img = np.pad(img, ((0,0), (0, pad_h), (0, pad_w)), mode='constant')
-             h, w = img.shape[1], img.shape[2]
-
-        # D. Trouver le "Point Chaud" (Sniper) sur le canal Norme (Index 3)
-        norm_map = img[3, :, :]
-        flat_idx = np.argmax(norm_map)
-        max_y, max_x = np.unravel_index(flat_idx, norm_map.shape)
-        
-        # E. Calcul du crop
-        half = PATCH_SIZE // 2
-        top = max(0, max_y - half)
-        left = max(0, max_x - half)
-        
-        # Ajustement bords
-        if top + PATCH_SIZE > h: top = h - PATCH_SIZE
-        if left + PATCH_SIZE > w: left = w - PATCH_SIZE
-        
-        patch = img[:, top:top+PATCH_SIZE, left:left+PATCH_SIZE]
-        
-        # F. Normalisation (Z-Score) - INDISPENSABLE
-        norm_patch = np.zeros_like(patch)
-        for i in range(c):
-            std = np.std(patch[i])
-            if std < 1e-6: std = 1.0
-            norm_patch[i] = (patch[i] - np.mean(patch[i])) / std
-            
-        return torch.from_numpy(norm_patch).float(), True
-
-    except Exception as e:
-        print(f"Erreur lecture {Path(npz_path).name}: {e}")
-        # Retourne un tenseur vide en cas d'erreur pour ne pas planter le batch
-        return torch.zeros((4, PATCH_SIZE, PATCH_SIZE)), False
-
-# ==========================================
-# 3. DATASET D'INFÉRENCE
-# ==========================================
-class InferenceDataset(Dataset):
-    def __init__(self, file_paths):
-        self.file_paths = file_paths
-
-    def __len__(self):
-        return len(self.file_paths)
-
-    def __getitem__(self, idx):
-        path = self.file_paths[idx]
-        tensor, success = get_sniper_patch(path)
-        return tensor, str(path), success
-
-# ==========================================
-# 4. MAIN
-# ==========================================
-if __name__ == "__main__":
-    print(f"Utilisation du device : {DEVICE}")
-
-    # 1. Lister les fichiers
-    all_files = list(Path(INPUT_FOLDER).glob("*.npz"))
-    if not all_files:
-        print(f"❌ Aucun fichier .npz trouvé dans {INPUT_FOLDER}")
-        exit()
-    print(f"📂 Fichiers à traiter : {len(all_files)}")
-
-    # 2. Charger le modèle (Architecture importée de train.py)
-    print("🧠 Chargement du modèle...")
-    model = PipelinePresenceClassifier(num_channels=4).to(DEVICE)
+def predict(model_path, image_path, device='cpu'):
+    """
+    Prédit la présence de conduite dans une image
     
     Returns:
         probability: Probabilité de présence de conduite (0-1)
@@ -151,43 +85,19 @@ if __name__ == "__main__":
     model.load_state_dict(checkpoint['model_state_dict'])
     model.to(device)
     model.eval()
-
-    # 3. Dataloader
-    dataset = InferenceDataset(all_files)
-    loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
-
-    results = []
-
-    # 4. Inférence
-    print("🚀 Démarrage des prédictions...")
+    
+    # Prétraiter l'image
+    image_tensor = preprocess_image(image_path)
+    image_tensor = image_tensor.to(device)
+    
+    # Prédiction
     with torch.no_grad():
-        for images, paths, successes in tqdm(loader):
-            images = images.to(DEVICE)
-            
-            # Prédiction
-            outputs = model(images)
-            probs = outputs.cpu().numpy().flatten()
-            
-            # Stockage
-            for i, prob in enumerate(probs):
-                if not successes[i]: # Si le fichier était corrompu
-                    results.append({
-                        "filename": Path(paths[i]).name,
-                        "probability": 0.0,
-                        "prediction": 0,
-                        "status": "ERROR_READING_FILE"
-                    })
-                    continue
+        output = model(image_tensor)
+        probability = output.item()
+        prediction = 1 if probability > 0.5 else 0
+    
+    return probability, prediction
 
-                pred_class = 1 if prob > 0.5 else 0
-                label = "Pipe" if pred_class == 1 else "No Pipe"
-                
-                results.append({
-                    "filename": Path(paths[i]).name,
-                    "probability": round(float(prob), 4),
-                    "prediction": pred_class,
-                    "status": label
-                })
 
 def main():
     # parser = argparse.ArgumentParser(description='Predict pipeline presence in magnetic images')
@@ -204,10 +114,10 @@ def main():
     # print(f"Analyzing image: {args.input}")
     no_pipe_predictions = 0
     pipe_prediction= 0
-    for file in tqdm(glob.glob("real_data/*.npz"), desc="Analyzing images"):
+    for file in tqdm(glob.glob("TEST/*.npz"), desc="Analyzing images"):
         # print(f"Analyzing image: {file}")
         
-        probability, prediction = predict("V2_pipeline_classifier_epoch2.pth", file, "cuda")
+        probability, prediction = predict("weights/task1_epoch8_best.pth", file, "cuda")
         if prediction == 0: 
             no_pipe_predictions += 1
         elif prediction == 1:
