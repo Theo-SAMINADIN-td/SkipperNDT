@@ -84,11 +84,11 @@ class PipelineDataset(Dataset):
         return normalized
 
 
-class PipelinePresenceClassifier(nn.Module):
-    """Pretrained ResNet pour la classification binaire 4 canaux, sans sigmoid final (car on utilise BCEWithLogitsLoss)"""
+class CurrentIntensityClassifier(nn.Module):
+    """Pretrained ResNet pour la classification binaire de l'intensité du courant (4 canaux), sans sigmoid final (car on utilise BCEWithLogitsLoss)"""
 
     def __init__(self):
-        super(PipelinePresenceClassifier, self).__init__()
+        super(CurrentIntensityClassifier, self).__init__()
         weight = models.ResNet18_Weights.IMAGENET1K_V1
         self.resnet = models.resnet18(weights=weight)
 
@@ -162,7 +162,7 @@ def plot_training_history(history, save_path="training_history.png"):
 
     axes[0, 1].plot(history["train_acc"], label="Train Accuracy")
     axes[0, 1].plot(history["val_acc"], label="Val Accuracy")
-    axes[0, 1].axhline(y=0.92, color="r", linestyle="--", label="Target 92%")
+    axes[0, 1].axhline(y=0.90, color="r", linestyle="--", label="Target 90%")
     axes[0, 1].set_title("Accuracy")
     axes[0, 1].set_xlabel("Epoch")
     axes[0, 1].set_ylabel("Accuracy")
@@ -170,7 +170,7 @@ def plot_training_history(history, save_path="training_history.png"):
     axes[0, 1].grid(True)
 
     axes[1, 0].plot(history["val_recall"], label="Val Recall")
-    axes[1, 0].axhline(y=0.95, color="r", linestyle="--", label="Target 95%")
+    axes[1, 0].axhline(y=0.85, color="r", linestyle="--", label="Target 85%")
     axes[1, 0].set_title("Recall (Validation)")
     axes[1, 0].set_xlabel("Epoch")
     axes[1, 0].set_ylabel("Recall")
@@ -190,18 +190,29 @@ def plot_training_history(history, save_path="training_history.png"):
     plt.close()
 
 
-def load_data_with_labels(data_dir, real_data_dir):
+def load_data_with_labels(data_dir, label_column="label"):
     """
-    Charge les fichiers .npz et extrait les labels à partir des noms de fichiers
-
-    Label 0: no_pipe (absence de conduite)
-    Label 1: perfect, missed, ou tout autre (présence de conduite)
+    Charge les fichiers .npz et extrait les labels à partir du CSV
+    
+    label_column: nom de la colonne dans le CSV à utiliser comme label
+                  "label" pour pipe presence (TASK1)
+                  "intensity_class" pour current intensity (TASK3, si colonne disponible)
     """
     csv_path = os.path.join(data_dir, "pipe_detection_label.csv")
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"Label CSV not found: {csv_path}")
 
-    df = pd.read_csv(csv_path, sep=";")
+    df = pd.read_csv(csv_path, sep=",")
+    
+    # Vérifier que la colonne existe; sinon utiliser "label" par défaut
+    if label_column not in df.columns:
+        available_cols = list(df.columns)
+        print(f"  ⚠ Column '{label_column}' not found. Available columns: {available_cols}")
+        if "label" in df.columns:
+            print("  → Using 'label' column instead")
+            label_column = "label"
+        else:
+            raise ValueError(f"No suitable label column found in CSV. Available columns: {available_cols}")
 
     file_paths, labels = [], []
     missing = 0
@@ -210,37 +221,33 @@ def load_data_with_labels(data_dir, real_data_dir):
         fpath = os.path.join(data_dir, row["field_file"])
         if os.path.exists(fpath):
             file_paths.append(fpath)
-            labels.append(float(row["label"]))
+            labels.append(float(row[label_column]))
         else:
             missing += 1
 
     print(
-        f"  ✓ {len(file_paths)} samples loaded from CSV | {missing} files missing on disk"
+        f"  ✓ {len(file_paths)} samples loaded from CSV (column: '{label_column}') | {missing} files missing on disk"
     )
-
-    for fpath in glob.glob(os.path.join(real_data_dir, "*.npz")):
-        print(f"  ✓ Adding real data sample: {fpath}")
-        file_paths.append(fpath)
-        labels.append(0.0 if "no_pipe" in fpath else 1.0)
 
     return file_paths, labels
 
 
 if __name__ == "__main__":
-    DATA_DIR = "Training_database_float16.zip"
+    DATA_DIR = "TASK3_DATATRAINING"
     BATCH_SIZE = 16
-    NUM_EPOCHS = 10
+    NUM_EPOCHS = 30
     LEARNING_RATE = 1e-4
     TARGET_SIZE = (224, 224)
+    LABEL_COLUMN = "label"  # Use "label" (pipe presence) for now; change to "intensity_class" when available 
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     print("\n1. Loading data...")
-    file_paths, labels = load_data_with_labels("Training_database_float16", "real_data")
+    file_paths, labels = load_data_with_labels(DATA_DIR, label_column=LABEL_COLUMN)
     print(f"Total samples: {len(file_paths)}")
-    print(f"Class 0 (no pipe): {sum(1 for l in labels if l == 0.0)}")
-    print(f"Class 1 (with pipe): {sum(1 for l in labels if l == 1.0)}")
+    print(f"Class 0 (insufficient): {sum(1 for label in labels if label == 0.0)}")
+    print(f"Class 1 (sufficient): {sum(1 for label in labels if label == 1.0)}")
 
     train_files, temp_files, train_labels, temp_labels = train_test_split(
         file_paths, labels, test_size=0.3, random_state=42, stratify=labels
@@ -270,14 +277,14 @@ if __name__ == "__main__":
     )
 
     print("\n3. Creating model...")
-    model = PipelinePresenceClassifier().to(device)
+    model = CurrentIntensityClassifier().to(device)
 
     # Loss avec pondération pour gérer le déséquilibre des classes
-    num_no_pipe = sum(1 for l in train_labels if l == 0.0)
-    num_with_pipe = sum(1 for l in train_labels if l == 1.0)
+    num_no_pipe = sum(1 for label in train_labels if label == 0.0)
+    num_with_pipe = sum(1 for label in train_labels if label == 1.0)
     weight = num_no_pipe / num_with_pipe if num_with_pipe > 0 else 1.0
 
-    # Permet de ne pas utiliser sigmoid dans le modèle et d'avoir une meilleure stabilité numérique
+    # Permet de ne pas utiliser sigmoid dans le modèle et d'avoir une meilleure stabilité
     criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(weight)).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
@@ -322,24 +329,27 @@ if __name__ == "__main__":
         print(
             f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | Val Recall: {val_recall:.4f} | Val F1: {val_f1:.4f}"
         )
-        torch.save(
-            {
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "val_accuracy": val_acc,
-                "val_recall": val_recall,
-                "val_f1": val_f1,
-            },
-            f"pipeline_classifier_epoch{epoch + 1}_{time.time()}.pth",
-        )
-        print(f"Model saved (Recall: {val_recall:.4f})")
+        if val_recall > best_recall :
+            best_recall = val_recall
+            best_epoch = epoch + 1
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "val_accuracy": val_acc,
+                    "val_recall": val_recall,
+                    "val_f1": val_f1,
+                },
+                f"current_intensity_classifier_epoch{epoch + 1}.pth",
+            )
+            print(f"Model saved (Recall: {val_recall:.4f})")
 
     plot_training_history(history)
 
     print("\n5. Final evaluation on test set...")
     model.load_state_dict(
-        torch.load(f"pipeline_classifier_epoch{NUM_EPOCHS}_{time.time()}.pth")[
+        torch.load(f"current_intensity_classifier_epoch{NUM_EPOCHS}.pth")[
             "model_state_dict"
         ]
     )
@@ -349,10 +359,10 @@ if __name__ == "__main__":
     )
 
     print(f"\n{'=' * 50}")
-    print("FINAL TEST RESULTS")
+    print("FINAL TEST RESULTS - CURRENT INTENSITY CLASSIFICATION")
     print(f"{'=' * 50}")
-    print(f"Accuracy: {test_acc:.4f} (Target: > 0.92)")
-    print(f"Recall: {test_recall:.4f} (Target: > 0.95)")
+    print(f"Accuracy: {test_acc:.4f} (Target: > 0.90)")
+    print(f"Recall: {test_recall:.4f} (Target: > 0.85)")
     print(f"F1-Score: {test_f1:.4f}")
     print(f"Best epoch: {best_epoch}")
 
@@ -363,7 +373,7 @@ if __name__ == "__main__":
     print("\nClassification Report:")
     print(
         classification_report(
-            test_true, test_preds, target_names=["No Pipe", "With Pipe"]
+            test_true, test_preds, target_names=["Insufficient", "Sufficient"]
         )
     )
 
@@ -373,15 +383,15 @@ if __name__ == "__main__":
         "test_f1": float(test_f1),
         "best_epoch": best_epoch,
         "confusion_matrix": cm.tolist(),
-        "target_accuracy": 0.92,
-        "target_recall": 0.95,
-        "objectives_met": {"accuracy": test_acc > 0.92, "recall": test_recall > 0.95},
+        "target_accuracy": 0.90,
+        "target_recall": 0.85,
+        "objectives_met": {"accuracy": test_acc > 0.90, "recall": test_recall > 0.85},
     }
 
-    with open("test_results.json", "w") as f:
+    with open("test_results_task3.json", "w") as f:
         json.dump(results, f, indent=4)
 
     print("\n✓ Training complete! Results saved.")
-    print("  - Model: best_pipeline_classifier.pth")
+    print("  - Model: best_current_intensity_classifier.pth")
     print("  - History plot: training_history.png")
-    print("  - Results: test_results.json")
+    print("  - Results: test_results_task3.json")
