@@ -1,6 +1,4 @@
-# ============================================================
-#  ÉVALUATION DU MEILLEUR MODÈLE DE CLASSIFICATION DE TYPE DE TUYAU
-# ============================================================
+
 import os
 import torch
 import torch.nn as nn
@@ -16,9 +14,7 @@ import json
 import torchvision.transforms.functional as TF
 from torchvision import models
 
-# ============================================================
-#  CHEMINS & CONFIGURATION
-# ============================================================
+
 CSV_PATH             = "/content/drive/MyDrive/SkipperNDT/pipe_detection_label.csv"
 MODELS_DIR           = "/content/drive/MyDrive/SkipperNDT/models"
 BEST_TYPE_MODEL_PATH = f"{MODELS_DIR}/best_pipe_type_classifier.pth"
@@ -47,9 +43,6 @@ def find_train_dir():
 
 DATA_DIR_TRAIN = find_train_dir()
 
-# ============================================================
-#  BASE DATASET
-# ============================================================
 class BaseNpzDataset(Dataset):
     def __init__(self, file_paths, target_size=(128, 128), augment=False):
         self.file_paths  = file_paths
@@ -88,9 +81,6 @@ class BaseNpzDataset(Dataset):
             normalized[:, :, c] = (ch - np.mean(ch)) / std if std > 0 else ch - np.mean(ch)
         return normalized
 
-# ============================================================
-#  DATASET PIPE TYPE
-# ============================================================
 class PipeTypeDataset(BaseNpzDataset):
     """Label 0 = single pipe | Label 1 = parallel pipes"""
 
@@ -101,9 +91,6 @@ class PipeTypeDataset(BaseNpzDataset):
     def _make_target(self, idx):
         return torch.tensor(self.labels[idx], dtype=torch.float32)
 
-# ============================================================
-#  MODÈLE CLASSIFIER
-# ============================================================
 class PipeTypeClassifier(nn.Module):
     """Classifieur single vs parallel — backbone ResNet18 transféré depuis Task1"""
 
@@ -133,9 +120,6 @@ class PipeTypeClassifier(nn.Module):
     def forward(self, x):
         return self.classifier(self.resnet(x))
 
-# ============================================================
-#  CHARGEMENT DES DONNÉES
-# ============================================================
 def load_pipe_type_data(csv_path):
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"CSV introuvable : {csv_path}")
@@ -178,7 +162,6 @@ def load_pipe_type_data(csv_path):
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# ── Reconstruction du test set (même seed que l'entraînement) ─────────────
 file_paths, labels = load_pipe_type_data(CSV_PATH)
 
 _, temp_files, _, temp_labels = train_test_split(
@@ -195,7 +178,6 @@ test_loader = DataLoader(
 )
 print(f"✓ Test set reconstruit : {len(test_files)} samples")
 
-# ── Chargement du checkpoint ───────────────────────────────────────────────
 if not os.path.exists(BEST_TYPE_MODEL_PATH):
     raise FileNotFoundError(f"Modèle introuvable : {BEST_TYPE_MODEL_PATH}")
 
@@ -211,7 +193,6 @@ print(f"  Val Accuracy          : {checkpoint['val_accuracy']:.4f}")
 print(f"  Val Recall            : {checkpoint['val_recall']:.4f}")
 print(f"  Val F1                : {checkpoint['val_f1']:.4f}")
 
-# ── Inférence ─────────────────────────────────────────────────────────────
 all_preds, all_probs, all_labels_list = [], [], []
 
 with torch.no_grad():
@@ -229,7 +210,6 @@ all_preds  = np.array(all_preds).flatten()
 all_probs  = np.array(all_probs).flatten()
 all_labels = np.array(all_labels_list).flatten()
 
-# ── Métriques ─────────────────────────────────────────────────────────────
 test_acc    = accuracy_score(all_labels, all_preds)
 test_recall = recall_score(all_labels, all_preds, zero_division=0)
 test_f1     = f1_score(all_labels, all_preds, zero_division=0)
@@ -244,7 +224,6 @@ print(f"  F1-Score  : {test_f1:.4f}")
 print(f"\nClassification Report :")
 print(classification_report(all_labels, all_preds, target_names=['Single Pipe', 'Parallel Pipes']))
 
-# ── Visualisations ────────────────────────────────────────────────────────
 fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
 sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[0],
@@ -266,7 +245,6 @@ plt.tight_layout()
 plt.savefig(f"{MODELS_DIR}/pipe_type_eval_best_model.png")
 plt.show()
 
-# ── Sauvegarde JSON ────────────────────────────────────────────────────────
 results = {
     'best_epoch'      : int(checkpoint['epoch'] + 1),
     'test_accuracy'   : float(test_acc),
@@ -278,5 +256,5 @@ results_path = f"{MODELS_DIR}/pipe_type_best_model_results.json"
 with open(results_path, 'w') as f:
     json.dump(results, f, indent=4)
 
-print(f"\n💾 Résultats sauvegardés → {results_path}")
-print(f"📊 Graphiques sauvegardés → {MODELS_DIR}/pipe_type_eval_best_model.png")
+print(f"\n Résultats sauvegardés → {results_path}")
+print(f"Graphiques sauvegardés → {MODELS_DIR}/pipe_type_eval_best_model.png")

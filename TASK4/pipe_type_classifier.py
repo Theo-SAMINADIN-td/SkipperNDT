@@ -19,50 +19,22 @@ import json
 import torchvision.transforms.functional as TF
 from torchvision import models
 
-# ============================================================
-#  CHEMINS
-# ============================================================
-CSV_PATH             = "/content/drive/MyDrive/SkipperNDT/pipe_detection_label.csv"
-MODELS_DIR           = "/content/drive/MyDrive/SkipperNDT/models"
+CSV_PATH             = "pipe_presence_width_detection_label.csv"
+MODELS_DIR           = "TASK4/MODELS"
 os.makedirs(MODELS_DIR, exist_ok=True)
-PRESENCE_MODEL_PATH  = "/content/drive/MyDrive/SkipperNDT/TASK1_weights/task1_epoch8_best.pth"
+PRESENCE_MODEL_PATH  = "task1_epoch8_best.pth"
 BEST_TYPE_MODEL_PATH = f"{MODELS_DIR}/best_pipe_type_classifier.pth"
-DATA_DIR_REAL        = "/content/real_data"
+DATA_DIR_REAL        = "real_data"
+DATA_DIR_TRAIN = "Training_database_float16"
 
-# ── Auto-détection du bon sous-dossier Training_database ──────────────────
-def find_train_dir():
-    candidates = [
-        "/content/Training_database_float16/Training_database_float16",
-        "/content/Training_database_float16",
-    ]
-    for path in candidates:
-        if os.path.isdir(path):
-            files = os.listdir(path)
-            npz   = [f for f in files if f.endswith(".npz")]
-            if npz:
-                print(f"  ✓ DATA_DIR_TRAIN détecté : {path} ({len(npz)} fichiers .npz)")
-                return path
-    raise FileNotFoundError(
-        "Aucun dossier Training_database avec .npz trouvé. "
-        "Vérifiez l'extraction avec : os.listdir('/content/Training_database_float16')"
-    )
-
-DATA_DIR_TRAIN = find_train_dir()
-
-# ============================================================
-#  CONFIGURATION
-# ============================================================
 BATCH_SIZE     = 32
-NUM_EPOCHS     = 10           # augmenter à 40 pour entraînement complet
-WARMUP_EPOCHS  = 3            # backbone gelé pendant ces époques (10 pour run complet)
+NUM_EPOCHS     = 20          
+WARMUP_EPOCHS  = 3         
 LEARNING_RATE  = 1e-3
 LR_BACKBONE    = 1e-5
-TARGET_SIZE    = (128, 128)   # remettre (224, 224) pour entraînement complet
+TARGET_SIZE    = (224, 224)
 NUM_WORKERS    = 2
 
-# ============================================================
-#  BASE DATASET
-# ============================================================
 class BaseNpzDataset(Dataset):
     def __init__(self, file_paths, target_size=(128, 128), augment=False):
         self.file_paths  = file_paths
@@ -101,9 +73,7 @@ class BaseNpzDataset(Dataset):
             normalized[:, :, c] = (ch - np.mean(ch)) / std if std > 0 else ch - np.mean(ch)
         return normalized
 
-# ============================================================
-#  MODÈLE 1 — architecture exacte du checkpoint Task1
-# ============================================================
+
 class PipelinePresenceClassifier(nn.Module):
     """
     Correspond exactement au checkpoint task1_epoch8_best.pth :
@@ -122,15 +92,11 @@ class PipelinePresenceClassifier(nn.Module):
             padding=old_conv.padding,
             bias=False
         )
-        # fc intact — tel que sauvegardé dans le checkpoint
         self.resnet.fc = nn.Linear(self.resnet.fc.in_features, 1)
 
     def forward(self, x):
         return self.resnet(x)
 
-# ============================================================
-#  DATASET & MODÈLE 2
-# ============================================================
 class PipeTypeDataset(BaseNpzDataset):
     """Label 0 = single pipe | Label 1 = parallel pipes"""
 
@@ -158,8 +124,7 @@ class PipeTypeClassifier(nn.Module):
             bias=False
         )
         in_features      = self.resnet.fc.in_features
-        self.resnet.fc   = nn.Identity()   # on remplace fc par Identity pour brancher notre tête
-
+        self.resnet.fc   = nn.Identity() 
         self.classifier = nn.Sequential(
             nn.Dropout(0.5),
             nn.Linear(in_features, 128),
@@ -179,7 +144,6 @@ class PipeTypeClassifier(nn.Module):
         presence_model = PipelinePresenceClassifier(num_channels=4)
         presence_model.load_state_dict(checkpoint['model_state_dict'])
 
-        # Transfert de tout le backbone sauf fc (incompatible avec Identity)
         backbone_state = {
             k: v for k, v in presence_model.resnet.state_dict().items()
             if not k.startswith("fc.")
@@ -191,9 +155,6 @@ class PipeTypeClassifier(nn.Module):
             param.requires_grad = False
         print(f"✓ Backbone gelé pour {WARMUP_EPOCHS} époques de warm-up")
 
-# ============================================================
-#  CHARGEMENT DES DONNÉES (training_database + real_data)
-# ============================================================
 def load_pipe_type_data(csv_path):
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"CSV introuvable : {csv_path}")
@@ -213,7 +174,6 @@ def load_pipe_type_data(csv_path):
     for _, row in df_pipes.iterrows():
         field_file = str(row['field_file']).strip()
 
-        # Cherche dans les deux dossiers — robuste même si source est inversé
         path_train = os.path.join(DATA_DIR_TRAIN, field_file)
         path_real  = os.path.join(DATA_DIR_REAL,  field_file)
 
@@ -234,9 +194,6 @@ def load_pipe_type_data(csv_path):
           f"({found_train} training_db | {found_real} real_data) | {missing} manquants")
     return file_paths, labels
 
-# ============================================================
-#  FONCTIONS ENTRAÎNEMENT / VALIDATION
-# ============================================================
 def train_epoch(model, dataloader, criterion, optimizer, device):
     model.train()
     running_loss, all_preds, all_labels = 0.0, [], []
@@ -309,16 +266,12 @@ def plot_training_history(history, save_path):
     print(f"  ✓ Historique sauvegardé : {save_path}")
     plt.show()
 
-# ============================================================
-#  MAIN
-# ============================================================
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     if device.type == "cpu":
-        print("  ⚠️  GPU non détecté — va dans Exécution → Modifier le type d'exécution → GPU T4")
+        print(" GPU non détecté. To CPU.")
 
-    # 1. Données
     print("\n1. Chargement des données (pipes uniquement)...")
     file_paths, labels = load_pipe_type_data(CSV_PATH)
 
