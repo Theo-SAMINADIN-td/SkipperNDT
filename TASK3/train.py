@@ -19,11 +19,6 @@ from tqdm import tqdm
 import json
 from torchvision import models
 
-
-# ──────────────────────────────────────────────
-# Dataset
-# ──────────────────────────────────────────────
-
 class PipelineDataset(Dataset):
     """Dataset pour charger les images .npz avec labels automatiques"""
 
@@ -66,10 +61,6 @@ class PipelineDataset(Dataset):
         return normalized
 
 
-# ──────────────────────────────────────────────
-# Model
-# ──────────────────────────────────────────────
-
 class CurrentIntensityClassifier(nn.Module):
     """
     ResNet18 pré-entraîné pour classification binaire sur 4 canaux.
@@ -110,10 +101,6 @@ class CurrentIntensityClassifier(nn.Module):
             param.requires_grad = True
         print("  All layers unfrozen — full fine-tuning")
 
-
-# ──────────────────────────────────────────────
-# Training & Validation
-# ──────────────────────────────────────────────
 
 def apply_threshold(outputs, threshold=0.5):
     """Applique sigmoid puis seuil pour obtenir les prédictions binaires"""
@@ -203,10 +190,6 @@ def find_best_threshold(model, dataloader, device, min_recall=0.85):
     return best_threshold
 
 
-# ──────────────────────────────────────────────
-# Plotting
-# ──────────────────────────────────────────────
-
 def plot_training_history(history, freeze_epochs=0, save_path="training_history.png"):
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
 
@@ -251,10 +234,6 @@ def plot_training_history(history, freeze_epochs=0, save_path="training_history.
     plt.close()
 
 
-# ──────────────────────────────────────────────
-# Data loading
-# ──────────────────────────────────────────────
-
 def load_data_with_labels(data_dir, label_column="label"):
     """
     Charge les fichiers .npz et extrait les labels à partir du CSV.
@@ -292,13 +271,7 @@ def load_data_with_labels(data_dir, label_column="label"):
     return file_paths, labels
 
 
-# ──────────────────────────────────────────────
-# Main
-# ──────────────────────────────────────────────
-
 if __name__ == "__main__":
-
-    # ── Hyperparameters ──────────────────────
     DATA_DIR        = "Training_data_inspection_validation_float16"
     BATCH_SIZE      = 16
     NUM_EPOCHS      = 30
