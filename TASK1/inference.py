@@ -3,16 +3,17 @@ Script de prédiction pour détecter la présence de conduites
 Usage: python predict_pipeline_presence.py --input <folder> --model <model_path>
 """
 
-import glob
-import torch
-import numpy as np
 import argparse
+import glob
+
+import numpy as np
+import torch
 from scipy.ndimage import zoom
 from tqdm import tqdm
 from train import PipelinePresenceClassifier
 
 
-def preprocess_image(image_path : str, target_size=(224, 224)) -> torch.Tensor:
+def preprocess_image(image_path: str, target_size=(224, 224)) -> torch.Tensor:
     """Prétraite une image .npz pour la prédiction"""
     data = np.load(image_path, allow_pickle=True)
     image = data["data"]
@@ -32,7 +33,7 @@ def preprocess_image(image_path : str, target_size=(224, 224)) -> torch.Tensor:
     return image_tensor
 
 
-def _resize_image(image : np.ndarray) -> np.ndarray:
+def _resize_image(image: np.ndarray) -> np.ndarray:
     """Redimensionne l'image à la taille cible"""
     h, w, c = image.shape
     target_h, target_w = 224, 224
@@ -45,7 +46,7 @@ def _resize_image(image : np.ndarray) -> np.ndarray:
     return resized
 
 
-def _normalize_channels(image : np.ndarray) -> np.ndarray:
+def _normalize_channels(image: np.ndarray) -> np.ndarray:
     """Normalise chaque canal indépendamment"""
     normalized = np.zeros_like(image)
 
@@ -62,7 +63,7 @@ def _normalize_channels(image : np.ndarray) -> np.ndarray:
     return normalized
 
 
-def predict(model_path : str, image_path : str, device="cpu") -> tuple[float, int]:
+def predict(model_path: str, image_path: str, device="cpu") -> tuple[float, int]:
     """Prédit la présence de conduite dans une image
 
     Returns:
@@ -93,14 +94,14 @@ def main():
     parser.add_argument(
         "--input",
         type=str,
-        required=False,
+        required=True,
         help="Path to .npz folder",
         default="Training_database_float16/*.npz",
     )
     parser.add_argument(
         "--model",
         type=str,
-        required=False,
+        required=True,
         help="Path to trained model",
         default=r"TASK1_weights/task1_epoch8_best.pth",
     )

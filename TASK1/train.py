@@ -1,27 +1,27 @@
+import argparse
+import glob
+import json
+import os
 import time
+
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-import numpy as np
-import os
-from sklearn.model_selection import train_test_split
 from scipy.ndimage import zoom
-import glob
 from sklearn.metrics import (
     accuracy_score,
-    recall_score,
-    f1_score,
-    confusion_matrix,
     classification_report,
+    confusion_matrix,
+    f1_score,
+    recall_score,
 )
-
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-import json
-
+from sklearn.model_selection import train_test_split
+from torch.utils.data import DataLoader, Dataset
 from torchvision import models
+from tqdm import tqdm
 
 
 class PipelineDataset(Dataset):
@@ -190,14 +190,13 @@ def plot_training_history(history, save_path="training_history.png"):
     plt.close()
 
 
-def load_data_with_labels(data_dir, real_data_dir):
+def load_data_with_labels(data_dir, real_data_dir, csv_path):
     """
     Charge les fichiers .npz et extrait les labels à partir des noms de fichiers
 
     Label 0: no_pipe (absence de conduite)
     Label 1: perfect, missed, ou tout autre (présence de conduite)
     """
-    csv_path = os.path.join(data_dir, "pipe_detection_label.csv")
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"Label CSV not found: {csv_path}")
 
@@ -227,7 +226,28 @@ def load_data_with_labels(data_dir, real_data_dir):
 
 
 if __name__ == "__main__":
-    DATA_DIR = "Training_database_float16.zip"
+    parser = argparse.ArgumentParser(
+        description="Train a pipeline presence classifier on magnetic images"
+    )
+    parser.add_argument(
+        "--input-data",
+        type=str,
+        required=True,
+        help="Path to .npz folder",
+        default="Training_database_float16/*.npz",
+    )
+    parser.add_argument(
+        "--csv-data",
+        type=str,
+        required=True,
+        help="Path to CSV file",
+        default="Training_database_float16/pipe_detection_label.csv",
+    )
+
+    args = parser.parse_args()
+    DATA_DIR = args.input_data
+    CSV_PATH = args.csv_data
+
     BATCH_SIZE = 16
     NUM_EPOCHS = 10
     LEARNING_RATE = 1e-4
@@ -237,10 +257,10 @@ if __name__ == "__main__":
     print(f"Using device: {device}")
 
     print("\n1. Loading data...")
-    file_paths, labels = load_data_with_labels("Training_database_float16", "real_data")
+    file_paths, labels = load_data_with_labels(DATA_DIR, "real_data", CSV_PATH)
     print(f"Total samples: {len(file_paths)}")
-    print(f"Class 0 (no pipe): {sum(1 for l in labels if l == 0.0)}")
-    print(f"Class 1 (with pipe): {sum(1 for l in labels if l == 1.0)}")
+    print(f"Class 0 (no pipe): {sum(1 for label in labels if label == 0.0)}")
+    print(f"Class 1 (with pipe): {sum(1 for label in labels if label == 1.0)}")
 
     train_files, temp_files, train_labels, temp_labels = train_test_split(
         file_paths, labels, test_size=0.3, random_state=42, stratify=labels
