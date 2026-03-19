@@ -10,27 +10,26 @@ Ameliorations vs V2 :
 Resolution : 0.20 m/pixel (confirmee par prof!!!±≠)
 """
 
+import argparse
+import json
+import warnings
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from pathlib import Path
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-import matplotlib.pyplot as plt
-import json
-import warnings
-warnings.filterwarnings('ignore')
 
-DATA_DIR = '/Users/macdekhail/Desktop/SkipperNDT/TASK2/data/Training_database_float16'
-CSV_PATH = '/Users/macdekhail/Desktop/SkipperNDT/TASK2/data/Training_database_float16/pipe_detection_label.csv'
+warnings.filterwarnings("ignore")
 
 RESOLUTION_M_PER_PX = 0.20
-
 
 def get_pipe_axis(ch_norm):
     h, w = ch_norm.shape
     margin_y, margin_x = h // 4, w // 4
-    zone = ch_norm[margin_y:h-margin_y, margin_x:w-margin_x]
+    zone = ch_norm[margin_y : h - margin_y, margin_x : w - margin_x]
     if (zone > 0).sum() < 20:
         zone = ch_norm
         margin_y, margin_x = 0, 0
@@ -74,7 +73,7 @@ def measure_width_from_profile(norm, threshold=0.10):
 
 
 def predict_width(npz_path):
-    img = np.load(npz_path, allow_pickle=True)['data'].astype(np.float32)
+    img = np.load(npz_path, allow_pickle=True)["data"].astype(np.float32)
 
     for canal in [2, 0, 3]:
         ch = np.nan_to_num(img[:, :, canal])
@@ -125,7 +124,7 @@ def predict_width(npz_path):
             filtered = widths
 
         width_px = np.median(filtered)
-        width_m  = width_px * RESOLUTION_M_PER_PX
+        width_m = width_px * RESOLUTION_M_PER_PX
 
         # Correction biais systematique observe (+2m)
         if width_m > 5.0:
@@ -137,20 +136,43 @@ def predict_width(npz_path):
 
 
 def main():
-    print("\n" + "="*70)
-    print("   MAP WIDTH — SOLUTION GEOMETRIQUE V3 — TACHE 2")
-    print("="*70 + "\n")
+    parser = argparse.ArgumentParser(
+        description="Train a pipeline presence classifier on magnetic images"
+    )
+    parser.add_argument(
+        "--input-data",
+        type=str,
+        required=True,
+        help="Path to .npz folder",
+        default="Training_database_float16/*.npz",
+    )
+    parser.add_argument(
+        "--csv-data",
+        type=str,
+        required=True,
+        help="Path to CSV file",
+        default="Training_database_float16/pipe_detection_label.csv",
+    )
 
-    out_dir = Path(__file__).parent / 'outputs'
+    args = parser.parse_args()
+    DATA_DIR = args.input_data
+    CSV_PATH = args.csv_data
+    print("\n" + "=" * 70)
+    print("   MAP WIDTH — SOLUTION GEOMETRIQUE V3 — TACHE 2")
+    print("=" * 70 + "\n")
+
+    out_dir = Path(__file__).parent / "outputs"
     out_dir.mkdir(exist_ok=True)
 
-    df      = pd.read_csv(CSV_PATH, sep=';')
-    df_pipe = df[df['label'] == 1]
-    lut     = dict(zip(df_pipe['field_file'], df_pipe['width_m']))
-    meta    = df_pipe.set_index('field_file')
+    df = pd.read_csv(CSV_PATH, sep=";")
+    df_pipe = df[df["label"] == 1]
+    lut = dict(zip(df_pipe["field_file"], df_pipe["width_m"]))
+    meta = df_pipe.set_index("field_file")
 
-    npz_files = sorted(Path(DATA_DIR).glob('*.npz'))
-    print(f"{len(npz_files)} fichiers NPZ | Resolution: {RESOLUTION_M_PER_PX} m/pixel\n")
+    npz_files = sorted(Path(DATA_DIR).glob("*.npz"))
+    print(
+        f"{len(npz_files)} fichiers NPZ | Resolution: {RESOLUTION_M_PER_PX} m/pixel\n"
+    )
 
     preds, targets, errors = [], [], []
     results_detail = []
@@ -169,80 +191,88 @@ def main():
             targets.append(true_w)
             errors.append(err)
             row = meta.loc[nom]
-            results_detail.append({
-                'true'    : true_w,
-                'pred'    : pred_w,
-                'error'   : err,
-                'coverage': row['coverage_type'],
-                'shape'   : row['shape'],
-                'noisy'   : row['noisy'],
-            })
+            results_detail.append(
+                {
+                    "true": true_w,
+                    "pred": pred_w,
+                    "error": err,
+                    "coverage": row["coverage_type"],
+                    "shape": row["shape"],
+                    "noisy": row["noisy"],
+                }
+            )
         except Exception:
             continue
 
         if (i + 1) % 200 == 0:
             print(f"   {len(preds)} predictions | MAE courante: {np.mean(errors):.4f}m")
 
-    preds   = np.array(preds)
+    preds = np.array(preds)
     targets = np.array(targets)
 
-    mae  = mean_absolute_error(targets, preds)
+    mae = mean_absolute_error(targets, preds)
     rmse = np.sqrt(mean_squared_error(targets, preds))
-    r2   = r2_score(targets, preds)
+    r2 = r2_score(targets, preds)
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("RESULTATS FINAUX")
-    print("="*70)
+    print("=" * 70)
     print(f"Echantillons : {len(preds)}")
-    print(f"MAE  : {mae:.4f}m  {'OBJECTIF ATTEINT' if mae < 1.0 else 'OBJECTIF NON ATTEINT'}")
+    print(
+        f"MAE  : {mae:.4f}m  {'OBJECTIF ATTEINT' if mae < 1.0 else 'OBJECTIF NON ATTEINT'}"
+    )
     print(f"RMSE : {rmse:.4f}m")
     print(f"R2   : {r2:.4f}")
-    print("="*70)
+    print("=" * 70)
 
     res = pd.DataFrame(results_detail)
     print("\nMAE par coverage_type:")
-    print(res.groupby('coverage')['error'].mean().round(3).to_string())
+    print(res.groupby("coverage")["error"].mean().round(3).to_string())
     print("\nMAE par shape:")
-    print(res.groupby('shape')['error'].mean().round(3).to_string())
+    print(res.groupby("shape")["error"].mean().round(3).to_string())
     print("\nMAE par noisy:")
-    print(res.groupby('noisy')['error'].mean().round(3).to_string())
+    print(res.groupby("noisy")["error"].mean().round(3).to_string())
     print()
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     axes[0].scatter(targets, preds, alpha=0.4, s=15)
     v = [0, max(targets.max(), preds.max())]
-    axes[0].plot(v, v, 'r--', lw=2, label='Parfait')
-    axes[0].set_xlabel('Reel (m)'); axes[0].set_ylabel('Predit (m)')
-    axes[0].set_title(f'Predictions vs Realite — MAE={mae:.3f}m R2={r2:.3f}')
-    axes[0].legend(); axes[0].grid(True, alpha=0.3)
+    axes[0].plot(v, v, "r--", lw=2, label="Parfait")
+    axes[0].set_xlabel("Reel (m)")
+    axes[0].set_ylabel("Predit (m)")
+    axes[0].set_title(f"Predictions vs Realite — MAE={mae:.3f}m R2={r2:.3f}")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
 
     errs = np.abs(preds - targets)
-    axes[1].hist(errs, bins=50, color='steelblue', edgecolor='white')
-    axes[1].axvline(1.0, color='r', ls='--', lw=2, label='Objectif 1m')
-    axes[1].axvline(mae, color='g', ls='--', lw=2, label=f'MAE={mae:.2f}m')
-    axes[1].set_xlabel('Erreur absolue (m)'); axes[1].set_ylabel('Fichiers')
-    axes[1].set_title('Distribution des erreurs')
-    axes[1].legend(); axes[1].grid(True, alpha=0.3)
+    axes[1].hist(errs, bins=50, color="steelblue", edgecolor="white")
+    axes[1].axvline(1.0, color="r", ls="--", lw=2, label="Objectif 1m")
+    axes[1].axvline(mae, color="g", ls="--", lw=2, label=f"MAE={mae:.2f}m")
+    axes[1].set_xlabel("Erreur absolue (m)")
+    axes[1].set_ylabel("Fichiers")
+    axes[1].set_title("Distribution des erreurs")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(out_dir / 'geometric_v3_results.png', dpi=100)
+    plt.savefig(out_dir / "geometric_v3_results.png", dpi=100)
     plt.close()
 
     results = {
-        'method'         : 'geometric_v3_adaptive_threshold',
-        'resolution'     : RESOLUTION_M_PER_PX,
-        'n_samples'      : len(preds),
-        'test_metrics'   : {'mae': float(mae), 'rmse': float(rmse), 'r2': float(r2)},
-        'objective_met'  : bool(mae < 1.0),
-        'mae_by_coverage': res.groupby('coverage')['error'].mean().round(3).to_dict(),
-        'mae_by_shape'   : res.groupby('shape')['error'].mean().round(3).to_dict(),
+        "method": "geometric_v3_adaptive_threshold",
+        "resolution": RESOLUTION_M_PER_PX,
+        "n_samples": len(preds),
+        "test_metrics": {"mae": float(mae), "rmse": float(rmse), "r2": float(r2)},
+        "objective_met": bool(mae < 1.0),
+        "mae_by_coverage": res.groupby("coverage")["error"].mean().round(3).to_dict(),
+        "mae_by_shape": res.groupby("shape")["error"].mean().round(3).to_dict(),
     }
-    with open(out_dir / 'geometric_v3_results.json', 'w') as f:
+    with open(out_dir / "geometric_v3_results.json", "w") as f:
         json.dump(results, f, indent=2)
 
     print("Resultats sauvegardes dans outputs/")
     print("Tache 2 V3 terminee !\n")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
