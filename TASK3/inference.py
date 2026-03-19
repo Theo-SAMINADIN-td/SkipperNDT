@@ -93,14 +93,14 @@ def main():
     parser.add_argument(
         "--input",
         type=str,
-        required=False,
+        required=True,
         help="Path to .npz folder",
         default="Task3_TEST/*.npz",
     )
     parser.add_argument(
         "--model",
         type=str,
-        required=False,
+        required=True,
         help="Path to trained model",
         default=r"pipeline_classifier_epoch15_1773661202.755215.pth",
     )
