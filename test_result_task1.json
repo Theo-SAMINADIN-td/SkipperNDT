@@ -1,0 +1,22 @@
+{
+    "test_accuracy": 0.9952941176470588,
+    "test_recall": 0.996078431372549,
+    "test_f1": 0.996078431372549,
+    "best_epoch": 1,
+    "confusion_matrix": [
+        [
+            169,
+            1
+        ],
+        [
+            1,
+            254
+        ]
+    ],
+    "target_accuracy": 0.92,
+    "target_recall": 0.95,
+    "objectives_met": {
+        "accuracy": true,
+        "recall": true
+    }
+}
