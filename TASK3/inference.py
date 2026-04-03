@@ -1,6 +1,6 @@
 """
-Script de prédiction pour détecter la présence de conduites
-Usage: python predict_pipeline_presence.py --input <folder> --model <model_path>
+Script de prédiction pour classifier l'intensité du courant
+Usage: python inference.py --input <folder> --model <model_path>
 """
 
 import argparse
@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from scipy.ndimage import zoom
 from tqdm import tqdm
-from train import PipelinePresenceClassifier
+from train import CurrentIntensityClassifier
 
 
 def preprocess_image(image_path: str, target_size=(224, 224)) -> torch.Tensor:
@@ -63,14 +63,14 @@ def _normalize_channels(image: np.ndarray) -> np.ndarray:
     return normalized
 
 
-def predict(model_path: str, image_path: str, device="cpu") -> tuple[float, int]:
-    """Prédit la présence de conduite dans une image
+def predict(model_path : str, image_path : str, device="cpu") -> tuple[float, int]:
+    """Prédit l'intensité du courant dans une image
 
     Returns:
-        probability: Probabilité de présence de conduite (0-1)
-        prediction: 0 (absence) ou 1 (présence)
+        probability: Probabilité d'intensité suffisante (0-1)
+        prediction: 0 (Insuffisant) ou 1 (Suffisant)
     """
-    model = PipelinePresenceClassifier()
+    model = CurrentIntensityClassifier()
     checkpoint = torch.load(model_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
@@ -89,21 +89,21 @@ def predict(model_path: str, image_path: str, device="cpu") -> tuple[float, int]
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Predict pipeline presence in magnetic images"
+        description="Predict current intensity classification in magnetic images"
     )
     parser.add_argument(
         "--input",
         type=str,
         required=True,
         help="Path to .npz folder",
-        default="Training_database_float16/*.npz",
+        default="Task3_TEST/*.npz",
     )
     parser.add_argument(
         "--model",
         type=str,
         required=True,
         help="Path to trained model",
-        default=r"TASK1_weights/task1_epoch8_best.pth",
+        default=r"pipeline_classifier_epoch15_1773661202.755215.pth",
     )
     parser.add_argument(
         "--device",
@@ -114,32 +114,24 @@ def main():
     args = parser.parse_args()
 
     print(f"Loading model from: {args.model}")
-    print(f"Analyzing image: {args.input}")
-    no_pipe_predictions = 0
-    pipe_prediction = 0
-    with_pipelines_groundtruth = 0
-    without_pipelines_groundtruth = 0
+    print(f"Analyzing images from: {args.input}")
+    
+    insufficient_count = 0
+    sufficient_count = 0
+    
     for file in tqdm(glob.glob(args.input), desc="Analyzing images"):
         probability, prediction = predict(args.model, file, args.device)
         if prediction == 0:
-            no_pipe_predictions += 1
-        elif prediction == 1:
-            pipe_prediction += 1
+            insufficient_count += 1
+        else:  # prediction == 1
+            sufficient_count += 1
 
-        if "no_pipe" in file:
-            without_pipelines_groundtruth += 1
-        else:
-            with_pipelines_groundtruth += 1
+    total = insufficient_count + sufficient_count
+    print(f"\nTotal images analyzed: {total}")
 
-    print(f"\nTotal images analyzed: {no_pipe_predictions + pipe_prediction}")
-
-    print("\nSummary:")
-    print(
-        f"{pipe_prediction} pipeline detected, expected {with_pipelines_groundtruth}."
-    )
-    print(
-        f"{no_pipe_predictions} no pipeline detected, expected {without_pipelines_groundtruth}."
-    )
+    print("\nPrediction Summary:")
+    print(f"  ✓ Sufficient intensity:   {sufficient_count} images ({sufficient_count/total*100:.1f}%)")
+    print(f"  ✗ Insufficient intensity: {insufficient_count} images ({insufficient_count/total*100:.1f}%)")
 
 
 if __name__ == "__main__":
